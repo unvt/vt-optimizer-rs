@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use indicatif::{ProgressBar, ProgressStyle};
+use rusqlite::{params, Connection, OpenFlags};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MbtilesStats {
@@ -31,47 +32,108 @@ fn ensure_mbtiles_path(path: &Path) -> Result<()> {
     }
 }
 
+fn open_readonly_mbtiles(path: &Path) -> Result<Connection> {
+    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("failed to open mbtiles: {}", path.display()))
+}
+
+fn apply_read_pragmas(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        PRAGMA query_only = ON;
+        PRAGMA temp_store = MEMORY;
+        PRAGMA synchronous = OFF;
+        PRAGMA cache_size = -200000;
+        ",
+    )
+    .context("failed to apply read pragmas")?;
+    Ok(())
+}
+
+fn make_progress_bar(total: u64) -> ProgressBar {
+    let bar = ProgressBar::new(total);
+    bar.set_style(
+        ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("=>-"),
+    );
+    bar
+}
+
 pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
     ensure_mbtiles_path(path)?;
-    let conn = Connection::open(path).with_context(|| {
-        format!("failed to open mbtiles: {}", path.display())
-    })?;
+    let conn = open_readonly_mbtiles(path)?;
+    apply_read_pragmas(&conn)?;
 
-    let (count, total, max): (u64, Option<u64>, Option<u64>) = conn
-        .query_row(
-            "SELECT COUNT(*), SUM(LENGTH(tile_data)), MAX(LENGTH(tile_data)) FROM tiles",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .context("failed to read tiles stats")?;
+    let total_tiles: u64 = conn
+        .query_row("SELECT COUNT(*) FROM tiles", [], |row| row.get(0))
+        .context("failed to read tile count")?;
+    let progress = make_progress_bar(total_tiles);
 
-    let overall = MbtilesStats {
-        tile_count: count,
-        total_bytes: total.unwrap_or(0),
-        max_bytes: max.unwrap_or(0),
+    let mut overall = MbtilesStats {
+        tile_count: 0,
+        total_bytes: 0,
+        max_bytes: 0,
     };
 
-    let mut by_zoom = Vec::new();
     let mut stmt = conn
-        .prepare(
-            "SELECT zoom_level, COUNT(*), SUM(LENGTH(tile_data)), MAX(LENGTH(tile_data)) FROM tiles GROUP BY zoom_level ORDER BY zoom_level",
-        )
-        .context("prepare zoom stats")?;
-    let mut rows = stmt.query([]).context("query zoom stats")?;
-    while let Some(row) = rows.next().context("read zoom stats")? {
+        .prepare("SELECT zoom_level, LENGTH(tile_data) FROM tiles ORDER BY zoom_level")
+        .context("prepare tiles scan")?;
+    let mut rows = stmt.query([]).context("query tiles scan")?;
+
+    let mut by_zoom = Vec::<MbtilesZoomStats>::new();
+    let mut current_zoom: Option<u8> = None;
+    let mut current_stats = MbtilesStats {
+        tile_count: 0,
+        total_bytes: 0,
+        max_bytes: 0,
+    };
+
+    let mut processed: u64 = 0;
+    while let Some(row) = rows.next().context("read tile row")? {
         let zoom: u8 = row.get(0)?;
-        let count: u64 = row.get(1)?;
-        let total: Option<u64> = row.get(2)?;
-        let max: Option<u64> = row.get(3)?;
+        let length: u64 = row.get(1)?;
+
+        overall.tile_count += 1;
+        overall.total_bytes += length;
+        overall.max_bytes = overall.max_bytes.max(length);
+
+        match current_zoom {
+            Some(z) if z == zoom => {}
+            Some(z) => {
+                by_zoom.push(MbtilesZoomStats {
+                    zoom: z,
+                    stats: current_stats.clone(),
+                });
+                current_stats = MbtilesStats {
+                    tile_count: 0,
+                    total_bytes: 0,
+                    max_bytes: 0,
+                };
+                current_zoom = Some(zoom);
+            }
+            None => current_zoom = Some(zoom),
+        }
+
+        current_stats.tile_count += 1;
+        current_stats.total_bytes += length;
+        current_stats.max_bytes = current_stats.max_bytes.max(length);
+
+        processed += 1;
+        if processed % 1000 == 0 {
+            progress.set_position(processed);
+        }
+    }
+
+    if let Some(z) = current_zoom {
         by_zoom.push(MbtilesZoomStats {
-            zoom,
-            stats: MbtilesStats {
-                tile_count: count,
-                total_bytes: total.unwrap_or(0),
-                max_bytes: max.unwrap_or(0),
-            },
+            zoom: z,
+            stats: current_stats,
         });
     }
+
+    progress.set_position(processed);
+    progress.finish_and_clear();
 
     Ok(MbtilesReport { overall, by_zoom })
 }

@@ -14,6 +14,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tempfile = "3.10"
 hilbert_2d = "1.1"
 varint-rs = "2.2"
+indicatif = "0.17"
 
 [lib]
 name = "tile_prune"

@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use tile_prune::format::{
-    decide_formats, default_output_path_pruned, plan_copy, plan_optimize, TileFormat,
+    decide_formats, default_output_path_pruned, plan_copy, plan_optimize, resolve_output_path,
+    TileFormat,
 };
 use tile_prune::format::validate_output_format_matches_path;
 
@@ -213,4 +214,20 @@ fn default_output_path_pruned_without_extension() {
 fn default_output_path_pruned_preserves_directory() {
     let path = default_output_path_pruned(Path::new("data/planet.mbtiles"), TileFormat::Mbtiles);
     assert_eq!(path.as_os_str(), "data/planet.pruned.mbtiles");
+}
+
+#[test]
+fn resolve_output_path_prefers_explicit_output() {
+    let path = resolve_output_path(
+        Path::new("input.mbtiles"),
+        Some(Path::new("out.pmtiles")),
+        TileFormat::Pmtiles,
+    );
+    assert_eq!(path.as_os_str(), "out.pmtiles");
+}
+
+#[test]
+fn resolve_output_path_defaults_to_pruned() {
+    let path = resolve_output_path(Path::new("input.mbtiles"), None, TileFormat::Mbtiles);
+    assert_eq!(path.as_os_str(), "input.pruned.mbtiles");
 }

@@ -135,3 +135,13 @@ pub fn default_output_path_pruned(input_path: &Path, output_format: TileFormat) 
     out.push(file_name);
     out
 }
+
+pub fn resolve_output_path(
+    input_path: &Path,
+    output_path: Option<&Path>,
+    output_format: TileFormat,
+) -> PathBuf {
+    output_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_output_path_pruned(input_path, output_format))
+}

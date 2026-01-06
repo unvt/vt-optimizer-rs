@@ -27,7 +27,7 @@ fn ensure_mbtiles_path(path: &Path) -> Result<()> {
     if ext.eq_ignore_ascii_case("mbtiles") {
         Ok(())
     } else {
-        anyhow::bail!("only .mbtiles paths are supported in v0.0.2");
+        anyhow::bail!("only .mbtiles paths are supported in v0.0.3");
     }
 }
 

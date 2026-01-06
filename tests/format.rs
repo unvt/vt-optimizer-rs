@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use tile_prune::format::{decide_formats, plan_copy, TileFormat};
+use tile_prune::format::{decide_formats, plan_copy, plan_optimize, TileFormat};
 use tile_prune::format::validate_output_format_matches_path;
 
 #[test]
@@ -154,6 +154,34 @@ fn plan_copy_rejects_output_conflict() {
         Some(Path::new("out.pmtiles")),
         None,
         Some("mbtiles"),
+    )
+    .expect_err("should error");
+
+    let msg = err.to_string();
+    assert!(msg.contains("conflicts"));
+}
+
+#[test]
+fn plan_optimize_uses_decide_formats() {
+    let decision = plan_optimize(
+        Path::new("input.mbtiles"),
+        Some(Path::new("out.pmtiles")),
+        None,
+        None,
+    )
+    .expect("decision");
+
+    assert_eq!(decision.input, TileFormat::Mbtiles);
+    assert_eq!(decision.output, TileFormat::Pmtiles);
+}
+
+#[test]
+fn plan_optimize_rejects_output_conflict() {
+    let err = plan_optimize(
+        Path::new("input.pmtiles"),
+        Some(Path::new("out.mbtiles")),
+        None,
+        Some("pmtiles"),
     )
     .expect_err("should error");
 

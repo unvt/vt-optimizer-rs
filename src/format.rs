@@ -101,3 +101,13 @@ pub fn plan_copy(
     validate_output_format_matches_path(output_path, output_format)?;
     decide_formats(input_path, output_path, input_format, output_format)
 }
+
+pub fn plan_optimize(
+    input_path: &Path,
+    output_path: Option<&Path>,
+    input_format: Option<&str>,
+    output_format: Option<&str>,
+) -> Result<FormatDecision> {
+    validate_output_format_matches_path(output_path, output_format)?;
+    decide_formats(input_path, output_path, input_format, output_format)
+}

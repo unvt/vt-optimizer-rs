@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -77,17 +78,11 @@ pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
     };
 
     let mut stmt = conn
-        .prepare("SELECT zoom_level, LENGTH(tile_data) FROM tiles ORDER BY zoom_level")
+        .prepare("SELECT zoom_level, LENGTH(tile_data) FROM tiles")
         .context("prepare tiles scan")?;
     let mut rows = stmt.query([]).context("query tiles scan")?;
 
-    let mut by_zoom = Vec::<MbtilesZoomStats>::new();
-    let mut current_zoom: Option<u8> = None;
-    let mut current_stats = MbtilesStats {
-        tile_count: 0,
-        total_bytes: 0,
-        max_bytes: 0,
-    };
+    let mut by_zoom: BTreeMap<u8, MbtilesStats> = BTreeMap::new();
 
     let mut processed: u64 = 0;
     while let Some(row) = rows.next().context("read tile row")? {
@@ -98,42 +93,28 @@ pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
         overall.total_bytes += length;
         overall.max_bytes = overall.max_bytes.max(length);
 
-        match current_zoom {
-            Some(z) if z == zoom => {}
-            Some(z) => {
-                by_zoom.push(MbtilesZoomStats {
-                    zoom: z,
-                    stats: current_stats.clone(),
-                });
-                current_stats = MbtilesStats {
-                    tile_count: 0,
-                    total_bytes: 0,
-                    max_bytes: 0,
-                };
-                current_zoom = Some(zoom);
-            }
-            None => current_zoom = Some(zoom),
-        }
-
-        current_stats.tile_count += 1;
-        current_stats.total_bytes += length;
-        current_stats.max_bytes = current_stats.max_bytes.max(length);
+        let entry = by_zoom.entry(zoom).or_insert(MbtilesStats {
+            tile_count: 0,
+            total_bytes: 0,
+            max_bytes: 0,
+        });
+        entry.tile_count += 1;
+        entry.total_bytes += length;
+        entry.max_bytes = entry.max_bytes.max(length);
 
         processed += 1;
-        if processed % 1000 == 0 {
+        if processed % 5000 == 0 {
             progress.set_position(processed);
         }
     }
 
-    if let Some(z) = current_zoom {
-        by_zoom.push(MbtilesZoomStats {
-            zoom: z,
-            stats: current_stats,
-        });
-    }
-
     progress.set_position(processed);
     progress.finish_and_clear();
+
+    let by_zoom = by_zoom
+        .into_iter()
+        .map(|(zoom, stats)| MbtilesZoomStats { zoom, stats })
+        .collect::<Vec<_>>();
 
     Ok(MbtilesReport { overall, by_zoom })
 }

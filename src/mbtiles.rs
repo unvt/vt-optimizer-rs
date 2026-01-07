@@ -2,10 +2,11 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
 use std::path::Path;
 use std::io::Read;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use mvt_reader::Reader;
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Serialize;
@@ -696,12 +697,13 @@ fn fetch_zoom_counts(conn: &Connection) -> Result<BTreeMap<u8, u64>> {
 }
 
 fn make_progress_bar(total: u64) -> ProgressBar {
-    let bar = ProgressBar::new(total);
+    let bar = ProgressBar::with_draw_target(Some(total), ProgressDrawTarget::stderr_with_hz(10));
     bar.set_style(
         ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
             .unwrap()
             .progress_chars("=>-"),
     );
+    bar.enable_steady_tick(Duration::from_millis(200));
     bar
 }
 

@@ -1,27 +1,170 @@
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use rusqlite::{params, Connection, OpenFlags};
+use serde::Serialize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MbtilesStats {
     pub tile_count: u64,
     pub total_bytes: u64,
     pub max_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MbtilesZoomStats {
     pub zoom: u8,
     pub stats: MbtilesStats,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MbtilesReport {
     pub overall: MbtilesStats,
     pub by_zoom: Vec<MbtilesZoomStats>,
+    pub empty_tiles: u64,
+    pub empty_ratio: f64,
+    pub sampled: bool,
+    pub sample_total_tiles: u64,
+    pub sample_used_tiles: u64,
+    pub histogram: Vec<HistogramBucket>,
+    pub top_tiles: Vec<TopTile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HistogramBucket {
+    pub min_bytes: u64,
+    pub max_bytes: u64,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TopTile {
+    pub zoom: u8,
+    pub x: u32,
+    pub y: u32,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SampleSpec {
+    Ratio(f64),
+    Count(u64),
+}
+
+#[derive(Debug, Clone)]
+pub struct InspectOptions {
+    pub sample: Option<SampleSpec>,
+    pub topn: usize,
+    pub histogram_buckets: usize,
+    pub no_progress: bool,
+}
+
+impl Default for InspectOptions {
+    fn default() -> Self {
+        Self {
+            sample: None,
+            topn: 0,
+            histogram_buckets: 0,
+            no_progress: false,
+        }
+    }
+}
+
+const EMPTY_TILE_MAX_BYTES: u64 = 50;
+
+pub fn parse_sample_spec(value: &str) -> Result<SampleSpec> {
+    let trimmed = value.trim();
+    let as_f64: f64 = trimmed.parse().context("invalid sample value")?;
+    if as_f64 <= 0.0 {
+        anyhow::bail!("sample must be greater than zero");
+    }
+    if as_f64 <= 1.0 {
+        return Ok(SampleSpec::Ratio(as_f64));
+    }
+    let as_u64: u64 = trimmed.parse().context("invalid sample count")?;
+    Ok(SampleSpec::Count(as_u64))
+}
+
+fn include_sample(index: u64, total: u64, spec: Option<&SampleSpec>) -> bool {
+    match spec {
+        None => true,
+        Some(SampleSpec::Count(count)) => index <= *count,
+        Some(SampleSpec::Ratio(ratio)) => {
+            if *ratio >= 1.0 {
+                return true;
+            }
+            if *ratio <= 0.0 {
+                return false;
+            }
+            let threshold = (ratio * u64::MAX as f64) as u64;
+            let hash = splitmix64(index ^ total);
+            hash <= threshold
+        }
+    }
+}
+
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e3779b97f4a7c15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+    z ^ (z >> 31)
+}
+
+fn build_histogram(
+    path: &Path,
+    sample: Option<&SampleSpec>,
+    total_tiles: u64,
+    buckets: usize,
+    min_len: u64,
+    max_len: u64,
+) -> Result<Vec<HistogramBucket>> {
+    if buckets == 0 || min_len > max_len {
+        return Ok(Vec::new());
+    }
+    let conn = open_readonly_mbtiles(path)?;
+    apply_read_pragmas(&conn)?;
+    let mut stmt = conn
+        .prepare("SELECT LENGTH(tile_data) FROM tiles ORDER BY rowid")
+        .context("prepare histogram scan")?;
+    let mut rows = stmt.query([]).context("query histogram scan")?;
+
+    let range = (max_len - min_len).max(1);
+    let bucket_size = ((range as f64) / buckets as f64).ceil() as u64;
+    let mut counts = vec![0u64; buckets];
+
+    let mut index: u64 = 0;
+    while let Some(row) = rows.next().context("read histogram row")? {
+        let length: u64 = row.get(0)?;
+        index += 1;
+        if !include_sample(index, total_tiles, sample) {
+            continue;
+        }
+        let mut bucket = ((length.saturating_sub(min_len)) / bucket_size) as usize;
+        if bucket >= buckets {
+            bucket = buckets - 1;
+        }
+        counts[bucket] += 1;
+    }
+
+    let mut result = Vec::with_capacity(buckets);
+    for i in 0..buckets {
+        let b_min = min_len + bucket_size * i as u64;
+        let b_max = if i + 1 == buckets {
+            max_len
+        } else {
+            (min_len + bucket_size * (i as u64 + 1)).saturating_sub(1)
+        };
+        result.push(HistogramBucket {
+            min_bytes: b_min,
+            max_bytes: b_max,
+            count: counts[i],
+        });
+    }
+    Ok(result)
 }
 
 fn ensure_mbtiles_path(path: &Path) -> Result<()> {
@@ -62,6 +205,10 @@ fn make_progress_bar(total: u64) -> ProgressBar {
 }
 
 pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
+    inspect_mbtiles_with_options(path, InspectOptions::default())
+}
+
+pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Result<MbtilesReport> {
     ensure_mbtiles_path(path)?;
     let conn = open_readonly_mbtiles(path)?;
     apply_read_pragmas(&conn)?;
@@ -69,7 +216,11 @@ pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
     let total_tiles: u64 = conn
         .query_row("SELECT COUNT(*) FROM tiles", [], |row| row.get(0))
         .context("failed to read tile count")?;
-    let progress = make_progress_bar(total_tiles);
+    let progress = if options.no_progress {
+        ProgressBar::hidden()
+    } else {
+        make_progress_bar(total_tiles)
+    };
 
     let mut overall = MbtilesStats {
         tile_count: 0,
@@ -78,31 +229,60 @@ pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
     };
 
     let mut stmt = conn
-        .prepare("SELECT zoom_level, LENGTH(tile_data) FROM tiles")
+        .prepare("SELECT zoom_level, tile_column, tile_row, LENGTH(tile_data) FROM tiles ORDER BY rowid")
         .context("prepare tiles scan")?;
     let mut rows = stmt.query([]).context("query tiles scan")?;
 
     let mut by_zoom: BTreeMap<u8, MbtilesStats> = BTreeMap::new();
-
+    let mut empty_tiles: u64 = 0;
     let mut processed: u64 = 0;
+    let mut used: u64 = 0;
+
+    let mut min_len: Option<u64> = None;
+    let mut max_len: Option<u64> = None;
+
+    let mut top_heap: BinaryHeap<Reverse<(u64, u8, u32, u32)>> = BinaryHeap::new();
+    let topn = options.topn;
+
     while let Some(row) = rows.next().context("read tile row")? {
         let zoom: u8 = row.get(0)?;
-        let length: u64 = row.get(1)?;
-
-        overall.tile_count += 1;
-        overall.total_bytes += length;
-        overall.max_bytes = overall.max_bytes.max(length);
-
-        let entry = by_zoom.entry(zoom).or_insert(MbtilesStats {
-            tile_count: 0,
-            total_bytes: 0,
-            max_bytes: 0,
-        });
-        entry.tile_count += 1;
-        entry.total_bytes += length;
-        entry.max_bytes = entry.max_bytes.max(length);
+        let x: u32 = row.get(1)?;
+        let y: u32 = row.get(2)?;
+        let length: u64 = row.get(3)?;
 
         processed += 1;
+
+        if include_sample(processed, total_tiles, options.sample.as_ref()) {
+            used += 1;
+
+            overall.tile_count += 1;
+            overall.total_bytes += length;
+            overall.max_bytes = overall.max_bytes.max(length);
+
+            let entry = by_zoom.entry(zoom).or_insert(MbtilesStats {
+                tile_count: 0,
+                total_bytes: 0,
+                max_bytes: 0,
+            });
+            entry.tile_count += 1;
+            entry.total_bytes += length;
+            entry.max_bytes = entry.max_bytes.max(length);
+
+            if length <= EMPTY_TILE_MAX_BYTES {
+                empty_tiles += 1;
+            }
+
+            min_len = Some(min_len.map_or(length, |v| v.min(length)));
+            max_len = Some(max_len.map_or(length, |v| v.max(length)));
+
+            if topn > 0 {
+                top_heap.push(Reverse((length, zoom, x, y)));
+                if top_heap.len() > topn {
+                    top_heap.pop();
+                }
+            }
+        }
+
         if processed % 5000 == 0 {
             progress.set_position(processed);
         }
@@ -116,7 +296,47 @@ pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
         .map(|(zoom, stats)| MbtilesZoomStats { zoom, stats })
         .collect::<Vec<_>>();
 
-    Ok(MbtilesReport { overall, by_zoom })
+    let mut top_tiles = top_heap
+        .into_iter()
+        .map(|Reverse((bytes, zoom, x, y))| TopTile {
+            zoom,
+            x,
+            y,
+            bytes,
+        })
+        .collect::<Vec<_>>();
+    top_tiles.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+
+    let empty_ratio = if used == 0 {
+        0.0
+    } else {
+        empty_tiles as f64 / used as f64
+    };
+
+    let histogram = if options.histogram_buckets > 0 && min_len.is_some() {
+        build_histogram(
+            path,
+            options.sample.as_ref(),
+            total_tiles,
+            options.histogram_buckets,
+            min_len.unwrap(),
+            max_len.unwrap(),
+        )?
+    } else {
+        Vec::new()
+    };
+
+    Ok(MbtilesReport {
+        overall,
+        by_zoom,
+        empty_tiles,
+        empty_ratio,
+        sampled: options.sample.is_some(),
+        sample_total_tiles: total_tiles,
+        sample_used_tiles: used,
+        histogram,
+        top_tiles,
+    })
 }
 
 pub fn copy_mbtiles(input: &Path, output: &Path) -> Result<()> {

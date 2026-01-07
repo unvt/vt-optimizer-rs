@@ -34,6 +34,15 @@ pub struct InspectArgs {
 
     #[arg(long)]
     pub topn: Option<u32>,
+
+    #[arg(long)]
+    pub sample: Option<String>,
+
+    #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+    pub output: ReportFormat,
+
+    #[arg(long, default_value_t = false)]
+    pub no_progress: bool,
 }
 
 #[derive(Debug, Args)]
@@ -119,4 +128,10 @@ pub enum StyleMode {
     Layer,
     #[value(name = "layer+filter")]
     LayerFilter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ReportFormat {
+    Text,
+    Json,
 }

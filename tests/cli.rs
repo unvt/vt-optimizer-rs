@@ -1,6 +1,7 @@
 use clap::Parser;
 
 use tile_prune::cli::{Cli, Command, StyleMode};
+use tile_prune::cli::ReportFormat;
 
 #[test]
 fn parse_optimize_minimal() {
@@ -84,5 +85,35 @@ fn parse_optimize_style_modes() {
             assert_eq!(args.style_mode, StyleMode::Layer);
         }
         _ => panic!("expected optimize command"),
+    }
+}
+
+#[test]
+fn parse_inspect_options() {
+    let cli = Cli::parse_from([
+        "tile-prune",
+        "inspect",
+        "input.mbtiles",
+        "--sample",
+        "0.1",
+        "--topn",
+        "5",
+        "--histogram-buckets",
+        "12",
+        "--output",
+        "json",
+        "--no-progress",
+    ]);
+
+    match cli.command {
+        Command::Inspect(args) => {
+            assert_eq!(args.input.as_os_str(), "input.mbtiles");
+            assert_eq!(args.sample.as_deref(), Some("0.1"));
+            assert_eq!(args.topn, Some(5));
+            assert_eq!(args.histogram_buckets, 12);
+            assert_eq!(args.output, ReportFormat::Json);
+            assert!(args.no_progress);
+        }
+        _ => panic!("expected inspect command"),
     }
 }

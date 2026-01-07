@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use tile_prune::mbtiles::{copy_mbtiles, inspect_mbtiles, MbtilesStats, MbtilesZoomStats};
+use tile_prune::mbtiles::{
+    copy_mbtiles, inspect_mbtiles, inspect_mbtiles_with_options, MbtilesStats, MbtilesZoomStats,
+    InspectOptions, SampleSpec, parse_sample_spec,
+};
 
 fn create_sample_mbtiles(path: &Path) {
     let conn = rusqlite::Connection::open(path).expect("open");
@@ -64,6 +67,13 @@ fn inspect_mbtiles_reports_minimal_stats() {
             },
         }]
     );
+    assert_eq!(report.empty_tiles, 2);
+    assert_eq!(report.empty_ratio, 1.0);
+    assert!(!report.sampled);
+    assert_eq!(report.sample_total_tiles, 2);
+    assert_eq!(report.sample_used_tiles, 2);
+    assert!(report.histogram.is_empty());
+    assert!(report.top_tiles.is_empty());
 }
 
 #[test]
@@ -112,4 +122,48 @@ fn copy_mbtiles_rejects_non_mbtiles_paths() {
     let err = copy_mbtiles(&input, &output).expect_err("should error");
     let msg = err.to_string();
     assert!(msg.contains("mbtiles"));
+}
+
+#[test]
+fn inspect_mbtiles_topn_and_histogram() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("input.mbtiles");
+    create_sample_mbtiles(&path);
+
+    let options = InspectOptions {
+        sample: None,
+        topn: 1,
+        histogram_buckets: 2,
+        no_progress: true,
+    };
+    let report = inspect_mbtiles_with_options(&path, options).expect("inspect");
+    assert_eq!(report.top_tiles.len(), 1);
+    assert_eq!(report.top_tiles[0].bytes, 30);
+    assert_eq!(report.histogram.len(), 2);
+    assert_eq!(report.histogram.iter().map(|b| b.count).sum::<u64>(), 2);
+}
+
+#[test]
+fn inspect_mbtiles_sample_count() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("input.mbtiles");
+    create_sample_mbtiles(&path);
+
+    let options = InspectOptions {
+        sample: Some(SampleSpec::Count(1)),
+        topn: 0,
+        histogram_buckets: 0,
+        no_progress: true,
+    };
+    let report = inspect_mbtiles_with_options(&path, options).expect("inspect");
+    assert_eq!(report.sample_used_tiles, 1);
+    assert_eq!(report.overall.tile_count, 1);
+}
+
+#[test]
+fn parse_sample_spec_ratio_and_count() {
+    let ratio = parse_sample_spec("0.25").expect("ratio");
+    assert_eq!(ratio, SampleSpec::Ratio(0.25));
+    let count = parse_sample_spec("10").expect("count");
+    assert_eq!(count, SampleSpec::Count(10));
 }

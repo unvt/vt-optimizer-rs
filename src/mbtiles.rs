@@ -481,7 +481,9 @@ pub(crate) fn prune_tile_layers(
             if apply_filters {
                 match style.should_keep_feature(&layer.name, zoom, &feature, &mut stats.unknown_filters) {
                     crate::style::FilterResult::True => {}
-                    crate::style::FilterResult::Unknown => {}
+                    crate::style::FilterResult::Unknown => {
+                        stats.record_unknown_layer(&layer.name);
+                    }
                     crate::style::FilterResult::False => {
                         continue;
                     }
@@ -1672,6 +1674,7 @@ pub struct PruneStats {
     pub removed_features_by_zoom: BTreeMap<u8, u64>,
     pub removed_layers_by_zoom: BTreeMap<String, BTreeSet<u8>>,
     pub unknown_filters: usize,
+    pub unknown_filters_by_layer: BTreeMap<String, u64>,
 }
 
 impl PruneStats {
@@ -1687,6 +1690,13 @@ impl PruneStats {
             .entry(layer.to_string())
             .or_default()
             .insert(zoom);
+    }
+
+    fn record_unknown_layer(&mut self, layer: &str) {
+        *self
+            .unknown_filters_by_layer
+            .entry(layer.to_string())
+            .or_insert(0) += 1;
     }
 }
 

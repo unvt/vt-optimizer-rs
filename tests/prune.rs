@@ -165,3 +165,35 @@ fn prune_mbtiles_filters_features_by_style() {
         &mvt_reader::feature::Value::String("primary".to_string())
     );
 }
+
+#[test]
+fn prune_mbtiles_keeps_features_on_unknown_filter() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("input.mbtiles");
+    let output = dir.path().join("output.mbtiles");
+    let style_path = dir.path().join("style.json");
+
+    create_layer_mbtiles(&input);
+
+    fs::write(
+        &style_path,
+        r#"{"version":8,"sources":{"osm":{"type":"vector"}},"layers":[{"id":"roads","type":"line","source":"osm","source-layer":"roads","filter":["mystery",["get","class"],"primary"]}]}"#,
+    )
+    .expect("write style");
+    let style = read_style(&style_path).expect("read style");
+
+    prune_mbtiles_layer_only(&input, &output, &style, true).expect("prune mbtiles");
+
+    let conn = rusqlite::Connection::open(&output).expect("open output");
+    let data: Vec<u8> = conn
+        .query_row(
+            "SELECT tile_data FROM tiles WHERE zoom_level = 0 AND tile_column = 0 AND tile_row = 0",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read tile");
+    let reader = Reader::new(data).expect("decode");
+    let layers = reader.get_layer_metadata().expect("layers");
+    assert_eq!(layers.len(), 1);
+    assert_eq!(layers[0].name, "roads");
+}

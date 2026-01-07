@@ -435,4 +435,13 @@ fn print_prune_summary(stats: &PruneStats) {
             println!("- Removed layer {} from zoom levels {}", layer, zoom_list);
         }
     }
+    if stats.unknown_filters > 0 {
+        println!(
+            "- Unknown filter expressions kept: {}",
+            stats.unknown_filters
+        );
+        for (layer, count) in stats.unknown_filters_by_layer.iter() {
+            println!("- Unknown filter expressions in layer {}: {}", layer, count);
+        }
+    }
 }

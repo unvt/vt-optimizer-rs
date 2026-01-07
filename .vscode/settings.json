@@ -1,6 +1,7 @@
 {
     "cSpell.words": [
         "flate",
+        "indicatif",
         "libsqlite",
         "Mapbox",
         "maxzoom",
@@ -13,6 +14,7 @@
         "serde",
         "tile-prune",
         "tileset",
-        "topn"
+        "topn",
+        "varint"
     ]
 }

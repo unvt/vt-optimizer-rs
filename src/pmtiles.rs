@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 use varint_rs::{VarintReader, VarintWriter};
 
-use crate::mbtiles::{MbtilesReport, MbtilesStats};
+use crate::mbtiles::{InspectOptions, MbtilesReport, MbtilesStats, MbtilesZoomStats};
 
 const HEADER_SIZE: usize = 127;
 const MAGIC: &[u8; 7] = b"PMTiles";
@@ -357,7 +357,7 @@ fn read_metadata_section(mut file: &File, header: &Header) -> Result<BTreeMap<St
     let mut data = vec![0u8; header.metadata_length as usize];
     file.read_exact(&mut data).context("read metadata")?;
 
-    let decoded = decode_metadata_bytes(data, header.internal_compression)?;
+    let decoded = decode_internal_bytes(data, header.internal_compression)?;
 
     let value: Value = serde_json::from_slice(&decoded).context("parse metadata json")?;
     let mut metadata = BTreeMap::new();
@@ -373,7 +373,7 @@ fn read_metadata_section(mut file: &File, header: &Header) -> Result<BTreeMap<St
     Ok(metadata)
 }
 
-fn decode_metadata_bytes(data: Vec<u8>, internal_compression: u8) -> Result<Vec<u8>> {
+fn decode_internal_bytes(data: Vec<u8>, internal_compression: u8) -> Result<Vec<u8>> {
     if data.starts_with(&[0x1f, 0x8b]) {
         let mut decoder = GzDecoder::new(data.as_slice());
         let mut decoded = Vec::new();
@@ -386,6 +386,9 @@ fn decode_metadata_bytes(data: Vec<u8>, internal_compression: u8) -> Result<Vec<
     match internal_compression {
         0 => Ok(data),
         1 => {
+            if !data.starts_with(&[0x1f, 0x8b]) {
+                return Ok(data);
+            }
             let mut decoder = GzDecoder::new(data.as_slice());
             let mut decoded = Vec::new();
             decoder
@@ -405,22 +408,107 @@ fn decode_metadata_bytes(data: Vec<u8>, internal_compression: u8) -> Result<Vec<
     }
 }
 
-pub fn inspect_pmtiles_metadata(path: &Path) -> Result<MbtilesReport> {
+fn read_directory_section(
+    mut file: &File,
+    header: &Header,
+    offset: u64,
+    length: u64,
+) -> Result<Vec<Entry>> {
+    if length == 0 {
+        return Ok(Vec::new());
+    }
+    file.seek(SeekFrom::Start(offset))
+        .context("seek directory")?;
+    let mut data = vec![0u8; length as usize];
+    file.read_exact(&mut data).context("read directory")?;
+    let decoded = decode_internal_bytes(data, header.internal_compression)?;
+    decode_directory(&decoded)
+}
+
+fn accumulate_tile_counts(
+    file: &File,
+    header: &Header,
+    entries: &[Entry],
+    zoom_filter: Option<u8>,
+    total_tiles: &mut u64,
+    by_zoom: &mut BTreeMap<u8, u64>,
+) -> Result<()> {
+    for entry in entries {
+        if entry.run_length == 0 {
+            if entry.length == 0 {
+                continue;
+            }
+            let leaf_offset = header.leaf_offset + entry.offset;
+            let leaf_entries =
+                read_directory_section(file, header, leaf_offset, entry.length as u64)?;
+            accumulate_tile_counts(
+                file,
+                header,
+                &leaf_entries,
+                zoom_filter,
+                total_tiles,
+                by_zoom,
+            )?;
+            continue;
+        }
+        let run = entry.run_length.max(1);
+        for idx in 0..run {
+            let tile_id = entry.tile_id + idx as u64;
+            let (z, _x, _y) = tile_id_to_xyz(tile_id);
+            if let Some(target_zoom) = zoom_filter {
+                if z != target_zoom {
+                    continue;
+                }
+            }
+            *total_tiles += 1;
+            *by_zoom.entry(z).or_insert(0) += 1;
+        }
+    }
+    Ok(())
+}
+
+pub fn inspect_pmtiles_with_options(path: &Path, options: &InspectOptions) -> Result<MbtilesReport> {
     ensure_pmtiles_path(path)?;
     let file = File::open(path)
         .with_context(|| format!("failed to open input pmtiles: {}", path.display()))?;
     let header = read_header(&file).context("read header")?;
     let metadata = read_metadata_section(&file, &header)?;
 
+    let root_entries = read_directory_section(&file, &header, header.root_offset, header.root_length)
+        .context("read root directory")?;
+    let mut total_tiles = 0u64;
+    let mut by_zoom = BTreeMap::new();
+    accumulate_tile_counts(
+        &file,
+        &header,
+        &root_entries,
+        options.zoom,
+        &mut total_tiles,
+        &mut by_zoom,
+    )?;
+
+    let by_zoom = by_zoom
+        .into_iter()
+        .map(|(zoom, count)| MbtilesZoomStats {
+            zoom,
+            stats: MbtilesStats {
+                tile_count: count,
+                total_bytes: 0,
+                max_bytes: 0,
+                avg_bytes: 0,
+            },
+        })
+        .collect::<Vec<_>>();
+
     Ok(MbtilesReport {
         metadata,
         overall: MbtilesStats {
-            tile_count: 0,
+            tile_count: total_tiles,
             total_bytes: 0,
             max_bytes: 0,
             avg_bytes: 0,
         },
-        by_zoom: Vec::new(),
+        by_zoom,
         empty_tiles: 0,
         empty_ratio: 0.0,
         sampled: false,

@@ -11,7 +11,7 @@ use tile_prune::output::{
     format_bytes, format_histogram_table, format_histograms_by_zoom_section,
     format_metadata_section, ndjson_lines, pad_left, pad_right, resolve_output_format,
 };
-use tile_prune::pmtiles::{inspect_pmtiles_metadata, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
+use tile_prune::pmtiles::{inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -88,7 +88,7 @@ fn main() -> Result<()> {
                     inspect_mbtiles_with_options(&args.input, options)?
                 }
                 tile_prune::format::TileFormat::Pmtiles => {
-                    inspect_pmtiles_metadata(&args.input)?
+                    inspect_pmtiles_with_options(&args.input, &options)?
                 }
             };
             match output {

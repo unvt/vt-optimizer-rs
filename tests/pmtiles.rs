@@ -3,8 +3,8 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
 use brotli::CompressorWriter;
-use tile_prune::mbtiles::inspect_mbtiles;
-use tile_prune::pmtiles::{inspect_pmtiles_metadata, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
+use tile_prune::mbtiles::{inspect_mbtiles, InspectOptions};
+use tile_prune::pmtiles::{inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
 
 fn create_sample_mbtiles(path: &Path) {
     let conn = rusqlite::Connection::open(path).expect("open");
@@ -145,7 +145,8 @@ fn inspect_pmtiles_reads_metadata() {
         r#"{"name":"sample","minzoom":0,"maxzoom":2,"format":"pbf"}"#,
     );
 
-    let report = inspect_pmtiles_metadata(&pmtiles).expect("inspect pmtiles");
+    let report = inspect_pmtiles_with_options(&pmtiles, &InspectOptions::default())
+        .expect("inspect pmtiles");
     assert_eq!(report.metadata.get("name").map(String::as_str), Some("sample"));
     assert_eq!(report.metadata.get("minzoom").map(String::as_str), Some("0"));
     assert_eq!(report.metadata.get("maxzoom").map(String::as_str), Some("2"));
@@ -162,7 +163,31 @@ fn inspect_pmtiles_reads_brotli_metadata() {
         2,
     );
 
-    let report = inspect_pmtiles_metadata(&pmtiles).expect("inspect pmtiles");
+    let report = inspect_pmtiles_with_options(&pmtiles, &InspectOptions::default())
+        .expect("inspect pmtiles");
     assert_eq!(report.metadata.get("name").map(String::as_str), Some("sample"));
     assert_eq!(report.metadata.get("minzoom").map(String::as_str), Some("1"));
+}
+
+#[test]
+fn inspect_pmtiles_counts_tiles_by_zoom() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("input.mbtiles");
+    let pmtiles = dir.path().join("output.pmtiles");
+    create_sample_mbtiles(&input);
+
+    mbtiles_to_pmtiles(&input, &pmtiles).expect("mbtiles->pmtiles");
+    let report = inspect_pmtiles_with_options(&pmtiles, &InspectOptions::default())
+        .expect("inspect pmtiles");
+
+    assert_eq!(report.overall.tile_count, 2);
+    assert_eq!(report.by_zoom.len(), 2);
+    assert!(report
+        .by_zoom
+        .iter()
+        .any(|entry| entry.zoom == 0 && entry.stats.tile_count == 1));
+    assert!(report
+        .by_zoom
+        .iter()
+        .any(|entry| entry.zoom == 1 && entry.stats.tile_count == 1));
 }

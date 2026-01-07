@@ -34,6 +34,7 @@ pub struct MbtilesReport {
     pub sample_total_tiles: u64,
     pub sample_used_tiles: u64,
     pub histogram: Vec<HistogramBucket>,
+    pub histograms_by_zoom: Vec<ZoomHistogram>,
     pub top_tiles: Vec<TopTile>,
     pub bucket_count: Option<u64>,
     pub bucket_tiles: Vec<TopTile>,
@@ -55,6 +56,12 @@ pub struct HistogramBucket {
     pub accum_pct_level_bytes: f64,
     pub avg_near_limit: bool,
     pub avg_over_limit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ZoomHistogram {
+    pub zoom: u8,
+    pub buckets: Vec<HistogramBucket>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -408,6 +415,148 @@ fn build_histogram(
     Ok(result)
 }
 
+fn build_zoom_histograms(
+    path: &Path,
+    sample: Option<&SampleSpec>,
+    zoom_counts: &BTreeMap<u8, u64>,
+    zoom_minmax: &BTreeMap<u8, (u64, u64)>,
+    buckets: usize,
+    max_tile_bytes: u64,
+) -> Result<Vec<ZoomHistogram>> {
+    if buckets == 0 || zoom_minmax.is_empty() {
+        return Ok(Vec::new());
+    }
+    let conn = open_readonly_mbtiles(path)?;
+    apply_read_pragmas(&conn)?;
+    let mut stmt = conn
+        .prepare("SELECT zoom_level, LENGTH(tile_data) FROM tiles")
+        .context("prepare zoom histogram scan")?;
+    let mut rows = stmt.query([]).context("query zoom histogram scan")?;
+
+    struct ZoomAccum {
+        min_len: u64,
+        max_len: u64,
+        bucket_size: u64,
+        counts: Vec<u64>,
+        bytes: Vec<u64>,
+        index: u64,
+        used_tiles: u64,
+        used_bytes: u64,
+    }
+
+    let mut accums: BTreeMap<u8, ZoomAccum> = BTreeMap::new();
+    for (zoom, (min_len, max_len)) in zoom_minmax.iter() {
+        let range = (max_len - min_len).max(1);
+        let bucket_size = ((range as f64) / buckets as f64).ceil() as u64;
+        accums.insert(
+            *zoom,
+            ZoomAccum {
+                min_len: *min_len,
+                max_len: *max_len,
+                bucket_size,
+                counts: vec![0u64; buckets],
+                bytes: vec![0u64; buckets],
+                index: 0,
+                used_tiles: 0,
+                used_bytes: 0,
+            },
+        );
+    }
+
+    while let Some(row) = rows.next().context("read zoom histogram row")? {
+        let zoom: u8 = row.get(0)?;
+        let length: u64 = row.get(1)?;
+        let Some(accum) = accums.get_mut(&zoom) else {
+            continue;
+        };
+        accum.index += 1;
+        let total_tiles_db = *zoom_counts.get(&zoom).unwrap_or(&0);
+        if !include_sample(accum.index, total_tiles_db, sample) {
+            continue;
+        }
+        let mut bucket = ((length.saturating_sub(accum.min_len)) / accum.bucket_size) as usize;
+        if bucket >= buckets {
+            bucket = buckets - 1;
+        }
+        accum.counts[bucket] += 1;
+        accum.bytes[bucket] += length;
+        accum.used_tiles += 1;
+        accum.used_bytes += length;
+
+            if let Some(SampleSpec::Count(limit)) = sample {
+                if accum.used_tiles >= *limit {
+                    // keep scanning other zooms; no-op for this zoom
+                }
+            }
+    }
+
+    let mut result = Vec::new();
+    for (zoom, accum) in accums.into_iter() {
+        let mut buckets_vec = Vec::with_capacity(buckets);
+        let mut accum_count = 0u64;
+        let mut accum_bytes = 0u64;
+        let limit_threshold = (max_tile_bytes as f64) * 0.9;
+        for i in 0..buckets {
+            let b_min = accum.min_len + accum.bucket_size * i as u64;
+            let b_max = if i + 1 == buckets {
+                accum.max_len
+            } else {
+                (accum.min_len + accum.bucket_size * (i as u64 + 1)).saturating_sub(1)
+            };
+            accum_count += accum.counts[i];
+            accum_bytes += accum.bytes[i];
+            let running_avg = if accum_count == 0 {
+                0
+            } else {
+                accum_bytes / accum_count
+            };
+            let pct_tiles = if accum.used_tiles == 0 {
+                0.0
+            } else {
+                accum.counts[i] as f64 / accum.used_tiles as f64
+            };
+            let pct_level_bytes = if accum.used_bytes == 0 {
+                0.0
+            } else {
+                accum.bytes[i] as f64 / accum.used_bytes as f64
+            };
+            let accum_pct_tiles = if accum.used_tiles == 0 {
+                0.0
+            } else {
+                accum_count as f64 / accum.used_tiles as f64
+            };
+            let accum_pct_level_bytes = if accum.used_bytes == 0 {
+                0.0
+            } else {
+                accum_bytes as f64 / accum.used_bytes as f64
+            };
+            let avg_over_limit =
+                max_tile_bytes > 0 && (running_avg as f64) > max_tile_bytes as f64;
+            let avg_near_limit = max_tile_bytes > 0
+                && !avg_over_limit
+                && (running_avg as f64) >= limit_threshold;
+            buckets_vec.push(HistogramBucket {
+                min_bytes: b_min,
+                max_bytes: b_max,
+                count: accum.counts[i],
+                total_bytes: accum.bytes[i],
+                running_avg_bytes: running_avg,
+                pct_tiles,
+                pct_level_bytes,
+                accum_pct_tiles,
+                accum_pct_level_bytes,
+                avg_near_limit,
+                avg_over_limit,
+            });
+        }
+        result.push(ZoomHistogram {
+            zoom,
+            buckets: buckets_vec,
+        });
+    }
+    Ok(result)
+}
+
 fn ensure_mbtiles_path(path: &Path) -> Result<()> {
     let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     if ext.eq_ignore_ascii_case("mbtiles") {
@@ -433,6 +582,20 @@ fn apply_read_pragmas(conn: &Connection) -> Result<()> {
     )
     .context("failed to apply read pragmas")?;
     Ok(())
+}
+
+fn fetch_zoom_counts(conn: &Connection) -> Result<BTreeMap<u8, u64>> {
+    let mut stmt = conn
+        .prepare("SELECT zoom_level, COUNT(*) FROM tiles GROUP BY zoom_level")
+        .context("prepare zoom counts")?;
+    let mut rows = stmt.query([]).context("query zoom counts")?;
+    let mut counts = BTreeMap::new();
+    while let Some(row) = rows.next().context("read zoom count row")? {
+        let zoom: u8 = row.get(0)?;
+        let count: u64 = row.get(1)?;
+        counts.insert(zoom, count);
+    }
+    Ok(counts)
 }
 
 fn make_progress_bar(total: u64) -> ProgressBar {
@@ -490,6 +653,7 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
     let mut rows = stmt.query([]).context("query tiles scan")?;
 
     let mut by_zoom: BTreeMap<u8, MbtilesStats> = BTreeMap::new();
+    let mut zoom_minmax: BTreeMap<u8, (u64, u64)> = BTreeMap::new();
     let mut empty_tiles: u64 = 0;
     let mut processed: u64 = 0;
     let mut used: u64 = 0;
@@ -538,6 +702,13 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
 
             min_len = Some(min_len.map_or(length, |v| v.min(length)));
             max_len = Some(max_len.map_or(length, |v| v.max(length)));
+            zoom_minmax
+                .entry(zoom)
+                .and_modify(|(min, max)| {
+                    *min = (*min).min(length);
+                    *max = (*max).max(length);
+                })
+                .or_insert((length, length));
 
             if topn > 0 {
                 top_heap.push(Reverse((length, zoom, x, y)));
@@ -618,6 +789,12 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
         empty_tiles as f64 / used as f64
     };
 
+    let zoom_counts = if options.histogram_buckets > 0 && options.zoom.is_none() {
+        Some(fetch_zoom_counts(&conn)?)
+    } else {
+        None
+    };
+
     let histogram = if options.histogram_buckets > 0 && min_len.is_some() {
         let (level_tiles_used, level_bytes_used) = if let Some(target) = options.zoom {
             by_zoom
@@ -638,6 +815,20 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
             min_len.unwrap(),
             max_len.unwrap(),
             options.zoom,
+            options.max_tile_bytes,
+        )?
+    } else {
+        Vec::new()
+    };
+
+    let histograms_by_zoom = if options.histogram_buckets > 0 && options.zoom.is_none() {
+        let zoom_counts = zoom_counts.as_ref().expect("zoom counts");
+        build_zoom_histograms(
+            path,
+            options.sample.as_ref(),
+            zoom_counts,
+            &zoom_minmax,
+            options.histogram_buckets,
             options.max_tile_bytes,
         )?
     } else {
@@ -706,6 +897,7 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
         sample_total_tiles: total_tiles,
         sample_used_tiles: used,
         histogram,
+        histograms_by_zoom,
         top_tiles,
         bucket_count,
         bucket_tiles,

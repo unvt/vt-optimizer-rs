@@ -112,3 +112,32 @@ fn inspect_zoom_sampling_uses_zoom_tile_count() {
     assert_eq!(report.by_zoom.len(), 1);
     assert_eq!(report.by_zoom[0].zoom, 1);
 }
+
+#[test]
+fn inspect_histograms_by_zoom_includes_each_zoom() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("input.mbtiles");
+    create_zoom_sample_mbtiles(&path);
+
+    let options = InspectOptions {
+        sample: None,
+        topn: 0,
+        histogram_buckets: 2,
+        no_progress: true,
+        max_tile_bytes: 0,
+        zoom: None,
+        bucket: None,
+        tile: None,
+        summary: false,
+        layer: None,
+        recommend: false,
+        list_tiles: None,
+    };
+
+    let report = inspect_mbtiles_with_options(&path, options).expect("inspect");
+    assert_eq!(report.histograms_by_zoom.len(), 2);
+    assert_eq!(report.histograms_by_zoom[0].zoom, 0);
+    assert_eq!(report.histograms_by_zoom[1].zoom, 1);
+    assert_eq!(report.histograms_by_zoom[0].buckets.len(), 2);
+    assert_eq!(report.histograms_by_zoom[1].buckets.len(), 2);
+}

@@ -75,6 +75,7 @@ fn inspect_mbtiles_reports_minimal_stats() {
     assert_eq!(report.sample_total_tiles, 2);
     assert_eq!(report.sample_used_tiles, 2);
     assert!(report.histogram.is_empty());
+    assert!(report.histograms_by_zoom.is_empty());
     assert!(report.top_tiles.is_empty());
 }
 

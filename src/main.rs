@@ -12,7 +12,10 @@ use tile_prune::output::{
     format_metadata_section, ndjson_lines, pad_left, pad_right, resolve_output_format,
 };
 use nu_ansi_term::Color;
-use tile_prune::pmtiles::{inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
+use tile_prune::pmtiles::{
+    inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles,
+    prune_pmtiles_layer_only,
+};
 use tile_prune::style::read_style;
 
 fn main() -> Result<()> {
@@ -334,8 +337,18 @@ fn main() -> Result<()> {
                     println!("- Writing output file to {}", _output_path.display());
                     print_prune_summary(&stats);
                 }
+                (tile_prune::format::TileFormat::Pmtiles, tile_prune::format::TileFormat::Pmtiles) => {
+                    let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
+                    println!("- Processing tiles");
+                    let stats =
+                        prune_pmtiles_layer_only(&args.input, &_output_path, &style, apply_filters)?;
+                    println!("- Writing output file to {}", _output_path.display());
+                    print_prune_summary(&stats);
+                }
                 _ => {
-                    anyhow::bail!("v0.0.38 only supports MBTiles input/output for optimize");
+                    anyhow::bail!(
+                        "v0.0.47 only supports matching input/output formats for optimize"
+                    );
                 }
             }
             println!("optimize: input={} output={}", args.input.display(), _output_path.display());

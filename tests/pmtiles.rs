@@ -1,11 +1,18 @@
+use std::fs;
 use std::fs::File;
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use brotli::CompressorWriter;
+use flate2::read::GzDecoder;
 use mvt::{GeomEncoder, GeomType, Tile};
+use mvt_reader::Reader;
 use tile_prune::mbtiles::{inspect_mbtiles, InspectOptions};
-use tile_prune::pmtiles::{inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
+use tile_prune::pmtiles::{
+    inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles,
+    prune_pmtiles_layer_only,
+};
+use tile_prune::style::read_style;
 
 fn create_sample_mbtiles(path: &Path) {
     let conn = rusqlite::Connection::open(path).expect("open");
@@ -220,6 +227,51 @@ fn inspect_pmtiles_reads_brotli_metadata() {
         .expect("inspect pmtiles");
     assert_eq!(report.metadata.get("name").map(String::as_str), Some("sample"));
     assert_eq!(report.metadata.get("minzoom").map(String::as_str), Some("1"));
+}
+
+#[test]
+fn prune_pmtiles_removes_unlisted_layers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input_mbtiles = dir.path().join("input.mbtiles");
+    let input_pmtiles = dir.path().join("input.pmtiles");
+    let output_pmtiles = dir.path().join("output.pmtiles");
+    let output_mbtiles = dir.path().join("output.mbtiles");
+    let style_path = dir.path().join("style.json");
+
+    create_layer_mbtiles(&input_mbtiles);
+    mbtiles_to_pmtiles(&input_mbtiles, &input_pmtiles).expect("mbtiles->pmtiles");
+
+    fs::write(
+        &style_path,
+        r#"{"version":8,"sources":{"osm":{"type":"vector"}},"layers":[{"id":"roads","type":"line","source":"osm","source-layer":"roads","paint":{"line-width":1}}]}"#,
+    )
+    .expect("write style");
+    let style = read_style(&style_path).expect("read style");
+
+    prune_pmtiles_layer_only(&input_pmtiles, &output_pmtiles, &style, false)
+        .expect("prune pmtiles");
+
+    pmtiles_to_mbtiles(&output_pmtiles, &output_mbtiles).expect("pmtiles->mbtiles");
+    let conn = rusqlite::Connection::open(&output_mbtiles).expect("open output");
+    let data: Vec<u8> = conn
+        .query_row(
+            "SELECT tile_data FROM tiles WHERE zoom_level = 0 AND tile_column = 0 AND tile_row = 0",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read tile");
+    let payload = if data.starts_with(&[0x1f, 0x8b]) {
+        let mut decoder = GzDecoder::new(data.as_slice());
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded).expect("decode gzip");
+        decoded
+    } else {
+        data
+    };
+    let reader = Reader::new(payload).expect("decode");
+    let layers = reader.get_layer_metadata().expect("layers");
+    assert_eq!(layers.len(), 1);
+    assert_eq!(layers[0].name, "roads");
 }
 
 #[test]

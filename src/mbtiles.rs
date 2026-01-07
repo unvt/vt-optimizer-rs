@@ -242,7 +242,7 @@ fn decode_tile_payload(data: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-fn encode_tile_payload(data: &[u8], gzip: bool) -> Result<Vec<u8>> {
+pub(crate) fn encode_tile_payload(data: &[u8], gzip: bool) -> Result<Vec<u8>> {
     if !gzip {
         return Ok(data.to_vec());
     }
@@ -438,7 +438,7 @@ fn encode_geometry(geometry: &Geometry<f32>) -> Result<GeomData> {
     }
 }
 
-fn prune_tile_layers(
+pub(crate) fn prune_tile_layers(
     payload: &[u8],
     zoom: u8,
     style: &crate::style::MapboxStyle,

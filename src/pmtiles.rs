@@ -13,8 +13,8 @@ use serde_json::Value;
 use varint_rs::{VarintReader, VarintWriter};
 
 use crate::mbtiles::{
-    count_vertices, format_property_value, HistogramBucket, InspectOptions, MbtilesReport,
-    MbtilesStats, MbtilesZoomStats, ZoomHistogram,
+    count_vertices, encode_tile_payload, format_property_value, prune_tile_layers, HistogramBucket,
+    InspectOptions, MbtilesReport, MbtilesStats, MbtilesZoomStats, PruneStats, ZoomHistogram,
 };
 
 const HEADER_SIZE: usize = 127;
@@ -1042,6 +1042,107 @@ pub fn inspect_pmtiles_with_options(path: &Path, options: &InspectOptions) -> Re
         recommended_buckets: Vec::new(),
         top_tile_summaries: Vec::new(),
     })
+}
+
+pub fn prune_pmtiles_layer_only(
+    input: &Path,
+    output: &Path,
+    style: &crate::style::MapboxStyle,
+    apply_filters: bool,
+) -> Result<PruneStats> {
+    ensure_pmtiles_path(input)?;
+    ensure_pmtiles_path(output)?;
+
+    let file = File::open(input)
+        .with_context(|| format!("failed to open input pmtiles: {}", input.display()))?;
+    let header = read_header(&file).context("read header")?;
+    let root_entries =
+        read_directory_section(&file, &header, header.root_offset, header.root_length)?;
+
+    let keep_layers = style.source_layers();
+    let mut stats = PruneStats::default();
+    let mut tiles: Vec<(u64, Vec<u8>)> = Vec::new();
+    let mut min_zoom = u8::MAX;
+    let mut max_zoom = u8::MIN;
+
+    let mut stack = vec![root_entries];
+    let mut file = file;
+    while let Some(entries) = stack.pop() {
+        for entry in entries {
+            if entry.run_length == 0 {
+                if entry.length == 0 {
+                    continue;
+                }
+                let leaf_offset = header.leaf_offset + entry.offset;
+                let leaf_entries =
+                    read_directory_section(&file, &header, leaf_offset, entry.length as u64)?;
+                stack.push(leaf_entries);
+                continue;
+            }
+            let data_offset = header.data_offset + entry.offset;
+            let mut data = vec![0u8; entry.length as usize];
+            file.seek(SeekFrom::Start(data_offset))
+                .context("seek tile")?;
+            file.read_exact(&mut data).context("read tile data")?;
+            let payload = decode_tile_payload_pmtiles(&data, header.tile_compression)?;
+            let run = entry.run_length.max(1);
+            for idx in 0..run {
+                let tile_id = entry.tile_id + idx as u64;
+                let (z, _x, _y) = tile_id_to_xyz(tile_id);
+                min_zoom = min_zoom.min(z);
+                max_zoom = max_zoom.max(z);
+                let encoded = prune_tile_layers(
+                    &payload,
+                    z,
+                    style,
+                    &keep_layers,
+                    apply_filters,
+                    &mut stats,
+                )?;
+                let tile_data = encode_tile_payload(&encoded, true)?;
+                tiles.push((tile_id, tile_data));
+            }
+        }
+    }
+
+    tiles.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut entries = Vec::with_capacity(tiles.len());
+    let mut data_section = Vec::new();
+    for (tile_id, data) in tiles.iter() {
+        let offset = data_section.len() as u64;
+        let length = data.len() as u32;
+        data_section.extend_from_slice(data);
+        entries.push(Entry {
+            tile_id: *tile_id,
+            offset,
+            length,
+            run_length: 1,
+        });
+    }
+
+    let dir_bytes = encode_directory(&entries)?;
+    let header = build_header(
+        dir_bytes.len() as u64,
+        data_section.len() as u64,
+        entries.len() as u64,
+        if min_zoom == u8::MAX { 0 } else { min_zoom },
+        if max_zoom == u8::MIN { 0 } else { max_zoom },
+    );
+
+    let file = File::create(output)
+        .with_context(|| format!("failed to create output pmtiles: {}", output.display()))?;
+    write_header(&file, &header)?;
+
+    let mut file = file;
+    file.seek(SeekFrom::Start(header.root_offset))
+        .context("seek root directory")?;
+    file.write_all(&dir_bytes).context("write root directory")?;
+
+    file.seek(SeekFrom::Start(header.data_offset))
+        .context("seek data")?;
+    file.write_all(&data_section).context("write data")?;
+
+    Ok(stats)
 }
 
 pub fn mbtiles_to_pmtiles(input: &Path, output: &Path) -> Result<()> {

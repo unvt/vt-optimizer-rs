@@ -178,9 +178,27 @@ enum FilterKey {
 }
 
 #[derive(Debug, Clone)]
+enum Expr {
+    Literal(FilterValue),
+    Get(String),
+    Zoom,
+    Type,
+    Coalesce(Vec<Expr>),
+    Match {
+        input: Box<Expr>,
+        cases: Vec<(FilterValue, Expr)>,
+        fallback: Box<Expr>,
+    },
+    Case {
+        branches: Vec<(Filter, Expr)>,
+        fallback: Box<Expr>,
+    },
+}
+
+#[derive(Debug, Clone)]
 enum Filter {
-    Eq(FilterKey, FilterValue),
-    Neq(FilterKey, FilterValue),
+    Eq(Expr, Expr),
+    Neq(Expr, Expr),
     In(FilterKey, Vec<FilterValue>),
     NotIn(FilterKey, Vec<FilterValue>),
     Has(FilterKey),
@@ -195,13 +213,21 @@ enum Filter {
 impl Filter {
     fn evaluate(&self, feature: &mvt_reader::feature::Feature, zoom: u8) -> FilterResult {
         match self {
-            Filter::Eq(key, value) => match feature_value_by_key(feature, key, zoom) {
-                Some(actual) => FilterResult::from_bool(actual.equals(value)),
-                None => FilterResult::Unknown,
+            Filter::Eq(left, right) => match (
+                eval_expr(left, feature, zoom),
+                eval_expr(right, feature, zoom),
+            ) {
+                (Some(actual), Some(expected)) => FilterResult::from_bool(actual.equals(&expected)),
+                _ => FilterResult::Unknown,
             },
-            Filter::Neq(key, value) => match feature_value_by_key(feature, key, zoom) {
-                Some(actual) => FilterResult::from_bool(!actual.equals(value)),
-                None => FilterResult::Unknown,
+            Filter::Neq(left, right) => match (
+                eval_expr(left, feature, zoom),
+                eval_expr(right, feature, zoom),
+            ) {
+                (Some(actual), Some(expected)) => {
+                    FilterResult::from_bool(!actual.equals(&expected))
+                }
+                _ => FilterResult::Unknown,
             },
             Filter::In(key, values) => match feature_value_by_key(feature, key, zoom) {
                 Some(actual) => FilterResult::from_bool(values.iter().any(|v| actual.equals(v))),
@@ -367,12 +393,12 @@ fn parse_filter(value: &Value) -> Option<Filter> {
             if array.len() < 3 {
                 return Some(Filter::Unknown);
             }
-            let key = parse_filter_key(&array[1])?;
-            let value = parse_filter_value(&array[2])?;
+            let left = parse_filter_lhs(&array[1])?;
+            let right = parse_expr(&array[2])?;
             if op == "==" {
-                Some(Filter::Eq(key, value))
+                Some(Filter::Eq(left, right))
             } else {
-                Some(Filter::Neq(key, value))
+                Some(Filter::Neq(left, right))
             }
         }
         "in" | "!in" => {
@@ -447,6 +473,81 @@ fn parse_filter_value(value: &Value) -> Option<FilterValue> {
     None
 }
 
+fn parse_expr(value: &Value) -> Option<Expr> {
+    if let Some(text) = value.as_str() {
+        return Some(Expr::Literal(FilterValue::String(text.to_string())));
+    }
+    if let Some(number) = value.as_f64() {
+        return Some(Expr::Literal(FilterValue::Number(number)));
+    }
+    if let Some(boolean) = value.as_bool() {
+        return Some(Expr::Literal(FilterValue::Bool(boolean)));
+    }
+    let array = value.as_array()?;
+    if array.is_empty() {
+        return None;
+    }
+    let op = array[0].as_str()?;
+    match op {
+        "get" => {
+            let key = array.get(1)?.as_str()?;
+            Some(Expr::Get(key.to_string()))
+        }
+        "zoom" => Some(Expr::Zoom),
+        "geometry-type" => Some(Expr::Type),
+        "coalesce" => {
+            let mut items = Vec::new();
+            for item in array.iter().skip(1) {
+                items.push(parse_expr(item)?);
+            }
+            if items.is_empty() {
+                None
+            } else {
+                Some(Expr::Coalesce(items))
+            }
+        }
+        "match" => {
+            if array.len() < 4 {
+                return None;
+            }
+            let input = parse_expr(&array[1])?;
+            let mut cases = Vec::new();
+            let mut idx = 2;
+            while idx + 1 < array.len() - 1 {
+                let match_value = parse_filter_value(&array[idx])?;
+                let output = parse_expr(&array[idx + 1])?;
+                cases.push((match_value, output));
+                idx += 2;
+            }
+            let fallback = parse_expr(array.last()?)?;
+            Some(Expr::Match {
+                input: Box::new(input),
+                cases,
+                fallback: Box::new(fallback),
+            })
+        }
+        "case" => {
+            if array.len() < 4 {
+                return None;
+            }
+            let mut branches = Vec::new();
+            let mut idx = 1;
+            while idx + 1 < array.len() - 1 {
+                let condition = parse_filter(&array[idx]).unwrap_or(Filter::Unknown);
+                let output = parse_expr(&array[idx + 1])?;
+                branches.push((condition, output));
+                idx += 2;
+            }
+            let fallback = parse_expr(array.last()?)?;
+            Some(Expr::Case {
+                branches,
+                fallback: Box::new(fallback),
+            })
+        }
+        _ => None,
+    }
+}
+
 fn parse_filter_key(value: &Value) -> Option<FilterKey> {
     if let Some(name) = value.as_str() {
         return Some(match name {
@@ -468,6 +569,65 @@ fn parse_filter_key(value: &Value) -> Option<FilterKey> {
         "zoom" => Some(FilterKey::Zoom),
         "geometry-type" => Some(FilterKey::Type),
         _ => None,
+    }
+}
+
+fn parse_filter_lhs(value: &Value) -> Option<Expr> {
+    if let Some(key) = parse_filter_key(value) {
+        return Some(expr_from_key(key));
+    }
+    parse_expr(value)
+}
+
+fn expr_from_key(key: FilterKey) -> Expr {
+    match key {
+        FilterKey::Property(name) => Expr::Get(name),
+        FilterKey::Zoom => Expr::Zoom,
+        FilterKey::Type => Expr::Type,
+    }
+}
+
+fn eval_expr(
+    expr: &Expr,
+    feature: &mvt_reader::feature::Feature,
+    zoom: u8,
+) -> Option<FilterValue> {
+    match expr {
+        Expr::Literal(value) => Some(value.clone()),
+        Expr::Get(name) => feature_value_by_key(feature, &FilterKey::Property(name.clone()), zoom),
+        Expr::Zoom => Some(FilterValue::Number(zoom as f64)),
+        Expr::Type => Some(FilterValue::String(feature_type(feature).to_string())),
+        Expr::Coalesce(items) => {
+            for item in items {
+                if let Some(value) = eval_expr(item, feature, zoom) {
+                    return Some(value);
+                }
+            }
+            None
+        }
+        Expr::Match {
+            input,
+            cases,
+            fallback,
+        } => {
+            let input_value = eval_expr(input, feature, zoom)?;
+            for (match_value, output) in cases {
+                if input_value.equals(match_value) {
+                    return eval_expr(output, feature, zoom);
+                }
+            }
+            eval_expr(fallback, feature, zoom)
+        }
+        Expr::Case { branches, fallback } => {
+            for (condition, output) in branches {
+                match condition.evaluate(feature, zoom) {
+                    FilterResult::True => return eval_expr(output, feature, zoom),
+                    FilterResult::False => {}
+                    FilterResult::Unknown => return None,
+                }
+            }
+            eval_expr(fallback, feature, zoom)
+        }
     }
 }
 

@@ -160,3 +160,70 @@ fn style_filter_supports_get_and_in_expressions() {
         tile_prune::style::FilterResult::False
     );
 }
+
+#[test]
+fn style_filter_supports_match_case_coalesce() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let style_path = dir.path().join("style.json");
+    fs::write(
+        &style_path,
+        r#"{
+  "version": 8,
+  "sources": { "osm": { "type": "vector" } },
+  "layers": [
+    { "id": "roads", "type": "line", "source": "osm", "source-layer": "roads",
+      "filter": ["all",
+        ["==", ["match", ["get", "class"], "primary", "keep", "secondary", "drop", "default"], "keep"],
+        ["==", ["case", ["==", ["get", "class"], "primary"], "yes", ["==", ["get", "class"], "secondary"], "yes", "no"], "yes"],
+        ["==", ["coalesce", ["get", "name"], ["get", "class"], "fallback"], "primary"]
+      ]
+    }
+  ]
+}"#,
+    )
+    .expect("write style");
+
+    let style = read_style(&style_path).expect("read style");
+    let feature_primary = mvt_reader::feature::Feature {
+        geometry: geo_types::Geometry::Point(geo_types::Point::new(0.0, 0.0)),
+        id: None,
+        properties: Some(
+            [(
+                "class".to_string(),
+                mvt_reader::feature::Value::String("primary".to_string()),
+            )]
+            .into_iter()
+            .collect(),
+        ),
+    };
+    let feature_secondary = mvt_reader::feature::Feature {
+        geometry: geo_types::Geometry::Point(geo_types::Point::new(0.0, 0.0)),
+        id: None,
+        properties: Some(
+            [(
+                "class".to_string(),
+                mvt_reader::feature::Value::String("secondary".to_string()),
+            )]
+            .into_iter()
+            .collect(),
+        ),
+    };
+    let feature_missing = mvt_reader::feature::Feature {
+        geometry: geo_types::Geometry::Point(geo_types::Point::new(0.0, 0.0)),
+        id: None,
+        properties: None,
+    };
+    let mut unknown = 0usize;
+    assert_eq!(
+        style.should_keep_feature("roads", 3, &feature_primary, &mut unknown),
+        tile_prune::style::FilterResult::True
+    );
+    assert_eq!(
+        style.should_keep_feature("roads", 3, &feature_secondary, &mut unknown),
+        tile_prune::style::FilterResult::False
+    );
+    assert_eq!(
+        style.should_keep_feature("roads", 3, &feature_missing, &mut unknown),
+        tile_prune::style::FilterResult::False
+    );
+}

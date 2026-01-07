@@ -473,6 +473,13 @@ v0.0.4 では以下を **含めない**。
   * 可視 layer のみ filter を評価して OR 結合
   * minzoom/maxzoom と整合した判定
 
+---
+
+## 1.54 マイルストーン（v0.0.52）
+
+* 実タイル検証（monaco）
+  * MBTiles/PMTiles の optimize を実行して出力の統計を比較
+
 ## 2. 用語
 
 * **Tile key**: `z/x/y`（内部表現は XYZ）

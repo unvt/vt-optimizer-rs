@@ -164,6 +164,7 @@ pub enum StyleMode {
 pub enum ReportFormat {
     Text,
     Json,
+    Ndjson,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

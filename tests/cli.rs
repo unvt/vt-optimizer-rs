@@ -143,3 +143,14 @@ fn parse_inspect_options() {
         _ => panic!("expected inspect command"),
     }
 }
+
+#[test]
+fn parse_inspect_output_ndjson() {
+    let cli = Cli::parse_from(["tile-prune", "inspect", "input.mbtiles", "--output", "ndjson"]);
+    match cli.command {
+        Command::Inspect(args) => {
+            assert_eq!(args.output, ReportFormat::Ndjson);
+        }
+        _ => panic!("expected inspect command"),
+    }
+}

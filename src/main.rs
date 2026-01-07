@@ -7,6 +7,7 @@ use tile_prune::mbtiles::{
     copy_mbtiles, inspect_mbtiles_with_options, parse_sample_spec, parse_tile_spec, InspectOptions,
     TileListOptions, TileSort,
 };
+use tile_prune::output::ndjson_lines;
 use tile_prune::pmtiles::{mbtiles_to_pmtiles, pmtiles_to_mbtiles};
 
 fn main() -> Result<()> {
@@ -79,7 +80,9 @@ fn main() -> Result<()> {
                     println!("{}", json);
                 }
                 ReportFormat::Ndjson => {
-                    emit_ndjson(&report)?;
+                    for line in ndjson_lines(&report)? {
+                        println!("{}", line);
+                    }
                 }
                 ReportFormat::Text => {
                     println!(
@@ -240,95 +243,6 @@ fn main() -> Result<()> {
         }
     }
 
-    Ok(())
-}
-
-fn emit_ndjson(report: &tile_prune::mbtiles::MbtilesReport) -> Result<()> {
-    println!(
-        "{}",
-        serde_json::to_string(&serde_json::json!({
-            "type": "summary",
-            "overall": report.overall,
-            "by_zoom": report.by_zoom,
-            "empty_tiles": report.empty_tiles,
-            "empty_ratio": report.empty_ratio,
-            "sampled": report.sampled,
-            "sample_total_tiles": report.sample_total_tiles,
-            "sample_used_tiles": report.sample_used_tiles,
-        }))?
-    );
-    if !report.histogram.is_empty() {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "histogram",
-                "buckets": report.histogram,
-            }))?
-        );
-    }
-    if !report.histograms_by_zoom.is_empty() {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "histograms_by_zoom",
-                "items": report.histograms_by_zoom,
-            }))?
-        );
-    }
-    if let Some(count) = report.bucket_count {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "bucket_count",
-                "count": count,
-            }))?
-        );
-    }
-    if !report.bucket_tiles.is_empty() {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "bucket_tiles",
-                "tiles": report.bucket_tiles,
-            }))?
-        );
-    }
-    if !report.top_tiles.is_empty() {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "top_tiles",
-                "tiles": report.top_tiles,
-            }))?
-        );
-    }
-    if let Some(summary) = report.tile_summary.as_ref() {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "tile_summary",
-                "summary": summary,
-            }))?
-        );
-    }
-    if !report.recommended_buckets.is_empty() {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "recommended_buckets",
-                "buckets": report.recommended_buckets,
-            }))?
-        );
-    }
-    if !report.top_tile_summaries.is_empty() {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "type": "top_tile_summaries",
-                "summaries": report.top_tile_summaries,
-            }))?
-        );
-    }
     Ok(())
 }
 

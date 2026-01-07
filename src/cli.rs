@@ -63,6 +63,9 @@ pub struct InspectArgs {
     pub recommend: bool,
 
     #[arg(long, default_value_t = false)]
+    pub fast: bool,
+
+    #[arg(long, default_value_t = false)]
     pub list_tiles: bool,
 
     #[arg(long, default_value_t = 100)]

@@ -85,3 +85,30 @@ fn inspect_zoom_limits_stats_and_histogram() {
     assert!((report.histogram[1].pct_tiles - 0.5).abs() < 1e-6);
     assert!((report.histogram[1].accum_pct_tiles - 1.0).abs() < 1e-6);
 }
+
+#[test]
+fn inspect_zoom_sampling_uses_zoom_tile_count() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("input.mbtiles");
+    create_zoom_sample_mbtiles(&path);
+
+    let options = InspectOptions {
+        sample: Some(tile_prune::mbtiles::SampleSpec::Count(1)),
+        topn: 0,
+        histogram_buckets: 0,
+        no_progress: true,
+        max_tile_bytes: 0,
+        zoom: Some(1),
+        bucket: None,
+        tile: None,
+        summary: false,
+        layer: None,
+        recommend: false,
+        list_tiles: None,
+    };
+
+    let report = inspect_mbtiles_with_options(&path, options).expect("inspect");
+    assert_eq!(report.overall.tile_count, 1);
+    assert_eq!(report.by_zoom.len(), 1);
+    assert_eq!(report.by_zoom[0].zoom, 1);
+}

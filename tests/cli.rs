@@ -113,6 +113,7 @@ fn parse_inspect_options() {
         "--layer",
         "roads",
         "--recommend",
+        "--fast",
         "--list-tiles",
         "--limit",
         "20",
@@ -134,6 +135,7 @@ fn parse_inspect_options() {
             assert!(args.summary);
             assert_eq!(args.layer.as_deref(), Some("roads"));
             assert!(args.recommend);
+            assert!(args.fast);
             assert!(args.list_tiles);
             assert_eq!(args.limit, 20);
             assert_eq!(args.sort, tile_prune::cli::TileSortArg::Zxy);

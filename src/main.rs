@@ -43,10 +43,15 @@ fn main() -> Result<()> {
             } else {
                 args.topn
             };
+            let (sample, topn, histogram_buckets) = if args.fast {
+                (Some(tile_prune::mbtiles::SampleSpec::Ratio(0.1)), Some(5), 10)
+            } else {
+                (sample, topn, args.histogram_buckets as usize)
+            };
             let options = InspectOptions {
                 sample,
                 topn: topn.unwrap_or(0) as usize,
-                histogram_buckets: args.histogram_buckets as usize,
+                histogram_buckets,
                 no_progress: args.no_progress,
                 max_tile_bytes: args.max_tile_bytes,
                 zoom: args.zoom,

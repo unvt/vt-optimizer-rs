@@ -5,7 +5,7 @@ use tile_prune::cli::{Cli, Command, ReportFormat, TileSortArg};
 use tile_prune::format::{plan_copy, plan_optimize, resolve_output_path};
 use tile_prune::mbtiles::{
     copy_mbtiles, inspect_mbtiles_with_options, parse_sample_spec, parse_tile_spec,
-    prune_mbtiles_layer_only, InspectOptions, TileListOptions, TileSort,
+    prune_mbtiles_layer_only, InspectOptions, PruneStats, TileListOptions, TileSort,
 };
 use tile_prune::output::{
     format_bytes, format_histogram_table, format_histograms_by_zoom_section,
@@ -302,11 +302,16 @@ fn main() -> Result<()> {
             {
                 anyhow::bail!("v0.0.38 only supports --style-mode layer or layer+filter");
             }
+            println!("Prune steps");
+            println!("- Parsing style file");
             let style = read_style(style_path)?;
             match (decision.input, decision.output) {
                 (tile_prune::format::TileFormat::Mbtiles, tile_prune::format::TileFormat::Mbtiles) => {
                     let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
-                    prune_mbtiles_layer_only(&args.input, &_output_path, &style, apply_filters)?;
+                    println!("- Processing tiles");
+                    let stats = prune_mbtiles_layer_only(&args.input, &_output_path, &style, apply_filters)?;
+                    println!("- Writing output file to {}", _output_path.display());
+                    print_prune_summary(&stats);
                 }
                 _ => {
                     anyhow::bail!("v0.0.38 only supports MBTiles input/output for optimize");
@@ -355,4 +360,27 @@ fn init_tracing(level: &str) {
         tracing_subscriber::EnvFilter::new("info")
     });
     tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
+fn print_prune_summary(stats: &PruneStats) {
+    println!("Prune results");
+    if stats.removed_features_by_zoom.is_empty() {
+        println!("- Removed features: none");
+    } else {
+        for (zoom, count) in stats.removed_features_by_zoom.iter() {
+            println!("- Removed {} features in zoom {}", count, zoom);
+        }
+    }
+    if stats.removed_layers_by_zoom.is_empty() {
+        println!("- Removed layers: none");
+    } else {
+        for (layer, zooms) in stats.removed_layers_by_zoom.iter() {
+            let zoom_list = zooms
+                .iter()
+                .map(|z| z.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("- Removed layer {} from zoom levels {}", layer, zoom_list);
+        }
+    }
 }

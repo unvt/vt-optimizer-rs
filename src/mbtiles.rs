@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet};
 use std::path::Path;
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -396,7 +396,7 @@ fn prune_tile_layers(
     style: &crate::style::MapboxStyle,
     keep_layers: &HashSet<String>,
     apply_filters: bool,
-    unknown_filters: &mut usize,
+    stats: &mut PruneStats,
 ) -> Result<Vec<u8>> {
     let reader = Reader::new(payload.to_vec())
         .map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
@@ -415,9 +415,13 @@ fn prune_tile_layers(
     let mut tile = Tile::new(extent);
     for layer in layers {
         if !keep_layers.contains(&layer.name) {
+            stats.record_removed_layer(&layer.name, zoom);
+            stats.record_removed_features(zoom, layer.feature_count as u64);
             continue;
         }
         if !style.is_layer_visible_on_zoom(&layer.name, zoom) {
+            stats.record_removed_layer(&layer.name, zoom);
+            stats.record_removed_features(zoom, layer.feature_count as u64);
             continue;
         }
         let mut layer_builder = tile.create_layer(&layer.name);
@@ -427,7 +431,7 @@ fn prune_tile_layers(
         let mut kept_features = 0u64;
         for feature in features {
             if apply_filters {
-                match style.should_keep_feature(&layer.name, zoom, &feature, unknown_filters) {
+                match style.should_keep_feature(&layer.name, zoom, &feature, &mut stats.unknown_filters) {
                     crate::style::FilterResult::True => {}
                     crate::style::FilterResult::Unknown => {}
                     crate::style::FilterResult::False => {
@@ -471,7 +475,10 @@ fn prune_tile_layers(
             layer_builder = feature_builder.into_layer();
             kept_features += 1;
         }
+        let removed_features = (layer.feature_count as u64).saturating_sub(kept_features);
+        stats.record_removed_features(zoom, removed_features);
         if kept_features == 0 {
+            stats.record_removed_layer(&layer.name, zoom);
             continue;
         }
         tile.add_layer(layer_builder)
@@ -1604,12 +1611,35 @@ pub fn copy_mbtiles(input: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Default)]
+pub struct PruneStats {
+    pub removed_features_by_zoom: BTreeMap<u8, u64>,
+    pub removed_layers_by_zoom: BTreeMap<String, BTreeSet<u8>>,
+    pub unknown_filters: usize,
+}
+
+impl PruneStats {
+    fn record_removed_features(&mut self, zoom: u8, count: u64) {
+        if count == 0 {
+            return;
+        }
+        *self.removed_features_by_zoom.entry(zoom).or_insert(0) += count;
+    }
+
+    fn record_removed_layer(&mut self, layer: &str, zoom: u8) {
+        self.removed_layers_by_zoom
+            .entry(layer.to_string())
+            .or_default()
+            .insert(zoom);
+    }
+}
+
 pub fn prune_mbtiles_layer_only(
     input: &Path,
     output: &Path,
     style: &crate::style::MapboxStyle,
     apply_filters: bool,
-) -> Result<()> {
+) -> Result<PruneStats> {
     ensure_mbtiles_path(input)?;
     ensure_mbtiles_path(output)?;
 
@@ -1656,7 +1686,7 @@ pub fn prune_mbtiles_layer_only(
     let mut rows = stmt.query([]).context("query tiles")?;
 
     let keep_layers = style.source_layers();
-    let mut unknown_filters: usize = 0;
+    let mut stats = PruneStats::default();
     while let Some(row) = rows.next().context("read tile row")? {
         let zoom: u8 = row.get(0)?;
         let x: u32 = row.get(1)?;
@@ -1671,7 +1701,7 @@ pub fn prune_mbtiles_layer_only(
             style,
             &keep_layers,
             apply_filters,
-            &mut unknown_filters,
+            &mut stats,
         )?;
         let tile_data = encode_tile_payload(&encoded, is_gzip)?;
 
@@ -1683,8 +1713,8 @@ pub fn prune_mbtiles_layer_only(
     }
 
     tx.commit().context("commit output")?;
-    if apply_filters && unknown_filters > 0 {
-        warn!(count = unknown_filters, "unknown filter expressions encountered");
+    if apply_filters && stats.unknown_filters > 0 {
+        warn!(count = stats.unknown_filters, "unknown filter expressions encountered");
     }
-    Ok(())
+    Ok(stats)
 }

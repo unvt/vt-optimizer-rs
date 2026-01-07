@@ -404,6 +404,15 @@ v0.0.4 では以下を **含めない**。
   * legacy `["!", ...]` の扱い
   * 未対応式の keep 方針は固定（UNKNOWN=keep）
 
+---
+
+## 1.45 マイルストーン（v0.0.43）
+
+* prune のログ出力強化（vt-optimizer 相当の情報量）
+  * 処理ステップの明示（style 読込 / tiles 処理 / 出力）
+  * zoom 別の削除 feature 数
+  * zoom 別の削除 layer 名
+
 ## 2. 用語
 
 * **Tile key**: `z/x/y`（内部表現は XYZ）

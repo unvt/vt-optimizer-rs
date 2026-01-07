@@ -107,6 +107,11 @@ fn parse_inspect_options() {
         "3",
         "--bucket",
         "2",
+        "--list-tiles",
+        "--limit",
+        "20",
+        "--sort",
+        "zxy",
     ]);
 
     match cli.command {
@@ -119,6 +124,9 @@ fn parse_inspect_options() {
             assert!(args.no_progress);
             assert_eq!(args.zoom, Some(3));
             assert_eq!(args.bucket, Some(2));
+            assert!(args.list_tiles);
+            assert_eq!(args.limit, 20);
+            assert_eq!(args.sort, tile_prune::cli::TileSortArg::Zxy);
         }
         _ => panic!("expected inspect command"),
     }

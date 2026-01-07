@@ -49,6 +49,15 @@ pub struct InspectArgs {
 
     #[arg(long)]
     pub bucket: Option<usize>,
+
+    #[arg(long, default_value_t = false)]
+    pub list_tiles: bool,
+
+    #[arg(long, default_value_t = 100)]
+    pub limit: usize,
+
+    #[arg(long, value_enum, default_value_t = TileSortArg::Size)]
+    pub sort: TileSortArg,
 }
 
 #[derive(Debug, Args)]
@@ -140,4 +149,10 @@ pub enum StyleMode {
 pub enum ReportFormat {
     Text,
     Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TileSortArg {
+    Size,
+    Zxy,
 }

@@ -1,9 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
 
-use tile_prune::cli::{Cli, Command, ReportFormat};
+use tile_prune::cli::{Cli, Command, ReportFormat, TileSortArg};
 use tile_prune::format::{plan_copy, plan_optimize, resolve_output_path};
-use tile_prune::mbtiles::{copy_mbtiles, inspect_mbtiles_with_options, parse_sample_spec, InspectOptions};
+use tile_prune::mbtiles::{
+    copy_mbtiles, inspect_mbtiles_with_options, parse_sample_spec, InspectOptions, TileListOptions,
+    TileSort,
+};
 use tile_prune::pmtiles::{mbtiles_to_pmtiles, pmtiles_to_mbtiles};
 
 fn main() -> Result<()> {
@@ -23,7 +26,17 @@ fn main() -> Result<()> {
                 no_progress: args.no_progress,
                 zoom: args.zoom,
                 bucket: args.bucket,
-                list_tiles: None,
+                list_tiles: if args.list_tiles {
+                    Some(TileListOptions {
+                        limit: args.limit,
+                        sort: match args.sort {
+                            TileSortArg::Size => TileSort::Size,
+                            TileSortArg::Zxy => TileSort::Zxy,
+                        },
+                    })
+                } else {
+                    None
+                },
             };
             let report = inspect_mbtiles_with_options(&args.input, options)?;
             match args.output {

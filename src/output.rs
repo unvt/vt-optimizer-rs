@@ -201,7 +201,7 @@ pub fn format_histogram_table(buckets: &[HistogramBucket]) -> Vec<String> {
         pad_left("acc%tiles", 10),
         pad_left("acc%size", 10),
     ));
-    for bucket in buckets.iter() {
+    for bucket in buckets.iter().filter(|bucket| bucket.count > 0) {
         let warn = if bucket.avg_over_limit {
             "!! (over)"
         } else if bucket.avg_near_limit {

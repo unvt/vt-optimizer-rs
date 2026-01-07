@@ -97,6 +97,20 @@ fn format_histograms_by_zoom_omits_empty_buckets() {
 }
 
 #[test]
+fn format_histogram_table_omits_empty_buckets() {
+    let buckets = vec![
+        bucket(0, 10, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, false, false),
+        bucket(10, 20, 1, 10, 10, 1.0, 1.0, 1.0, 1.0, false, false),
+    ];
+    let lines = format_histogram_table(&buckets);
+    let zero_bucket_lines = lines
+        .iter()
+        .filter(|line| line.contains("0B") && line.contains("  0"))
+        .count();
+    assert_eq!(zero_bucket_lines, 0);
+}
+
+#[test]
 fn format_metadata_section_lists_entries() {
     let mut metadata = BTreeMap::new();
     metadata.insert("name".to_string(), "sample".to_string());

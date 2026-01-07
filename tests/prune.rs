@@ -5,7 +5,7 @@ use mvt::{GeomEncoder, GeomType, Tile};
 use mvt_reader::Reader;
 
 use tile_prune::mbtiles::prune_mbtiles_layer_only;
-use tile_prune::style::read_style_source_layers;
+use tile_prune::style::read_style;
 
 fn create_layer_tile() -> Vec<u8> {
     let mut tile = Tile::new(4096);
@@ -68,12 +68,12 @@ fn prune_mbtiles_removes_unlisted_layers() {
 
     fs::write(
         &style,
-        r#"{"version":8,"layers":[{"id":"roads","type":"line","source-layer":"roads"}]}"#,
+        r#"{"version":8,"sources":{"osm":{"type":"vector"}},"layers":[{"id":"roads","type":"line","source":"osm","source-layer":"roads","paint":{"line-width":1}},{"id":"buildings","type":"fill","source":"osm","source-layer":"buildings","paint":{"fill-opacity":0}}]}"#,
     )
     .expect("write style");
-    let keep_layers = read_style_source_layers(&style).expect("read style");
+    let style = read_style(&style).expect("read style");
 
-    prune_mbtiles_layer_only(&input, &output, &keep_layers).expect("prune mbtiles");
+    prune_mbtiles_layer_only(&input, &output, &style).expect("prune mbtiles");
 
     let conn = rusqlite::Connection::open(&output).expect("open output");
     let data: Vec<u8> = conn

@@ -12,7 +12,7 @@ use tile_prune::output::{
     format_metadata_section, ndjson_lines, pad_left, pad_right, resolve_output_format,
 };
 use tile_prune::pmtiles::{inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
-use tile_prune::style::read_style_source_layers;
+use tile_prune::style::read_style;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -300,10 +300,10 @@ fn main() -> Result<()> {
             if args.style_mode != tile_prune::cli::StyleMode::Layer {
                 anyhow::bail!("v0.0.36 only supports --style-mode layer");
             }
-            let keep_layers = read_style_source_layers(style_path)?;
+            let style = read_style(style_path)?;
             match (decision.input, decision.output) {
                 (tile_prune::format::TileFormat::Mbtiles, tile_prune::format::TileFormat::Mbtiles) => {
-                    prune_mbtiles_layer_only(&args.input, &_output_path, &keep_layers)?;
+                    prune_mbtiles_layer_only(&args.input, &_output_path, &style)?;
                 }
                 _ => {
                     anyhow::bail!("v0.0.36 only supports MBTiles input/output for optimize");

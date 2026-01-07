@@ -355,6 +355,13 @@ v0.0.4 では以下を **含めない**。
 
 ---
 
+## 1.39 マイルストーン（v0.0.37）
+
+* prune の layer 可視性判定を強化（vt-optimizer 準拠）
+  * `layout.visibility` + `minzoom/maxzoom` を反映
+  * `PaintPropertiesToCheck` による描画判定（0 判定 / stops 対応）
+  * `source-layer` が複数 style layer に存在する場合は OR 判定
+
 ## 2. 用語
 
 * **Tile key**: `z/x/y`（内部表現は XYZ）

@@ -389,7 +389,12 @@ fn encode_geometry(geometry: &Geometry<f32>) -> Result<GeomData> {
     }
 }
 
-fn prune_tile_layers(payload: &[u8], keep_layers: &HashSet<String>) -> Result<Vec<u8>> {
+fn prune_tile_layers(
+    payload: &[u8],
+    zoom: u8,
+    style: &crate::style::MapboxStyle,
+    keep_layers: &HashSet<String>,
+) -> Result<Vec<u8>> {
     let reader = Reader::new(payload.to_vec())
         .map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
     let layers = reader
@@ -398,7 +403,7 @@ fn prune_tile_layers(payload: &[u8], keep_layers: &HashSet<String>) -> Result<Ve
 
     let mut extent = 4096;
     for layer in layers.iter() {
-        if keep_layers.contains(&layer.name) {
+        if keep_layers.contains(&layer.name) && style.is_layer_visible_on_zoom(&layer.name, zoom) {
             extent = layer.extent;
             break;
         }
@@ -407,6 +412,9 @@ fn prune_tile_layers(payload: &[u8], keep_layers: &HashSet<String>) -> Result<Ve
     let mut tile = Tile::new(extent);
     for layer in layers {
         if !keep_layers.contains(&layer.name) {
+            continue;
+        }
+        if !style.is_layer_visible_on_zoom(&layer.name, zoom) {
             continue;
         }
         let mut layer_builder = tile.create_layer(&layer.name);
@@ -1582,7 +1590,7 @@ pub fn copy_mbtiles(input: &Path, output: &Path) -> Result<()> {
 pub fn prune_mbtiles_layer_only(
     input: &Path,
     output: &Path,
-    keep_layers: &HashSet<String>,
+    style: &crate::style::MapboxStyle,
 ) -> Result<()> {
     ensure_mbtiles_path(input)?;
     ensure_mbtiles_path(output)?;
@@ -1629,6 +1637,7 @@ pub fn prune_mbtiles_layer_only(
         .context("prepare tile scan")?;
     let mut rows = stmt.query([]).context("query tiles")?;
 
+    let keep_layers = style.source_layers();
     while let Some(row) = rows.next().context("read tile row")? {
         let zoom: u8 = row.get(0)?;
         let x: u32 = row.get(1)?;
@@ -1637,7 +1646,7 @@ pub fn prune_mbtiles_layer_only(
 
         let is_gzip = data.starts_with(&[0x1f, 0x8b]);
         let payload = decode_tile_payload(&data)?;
-        let encoded = prune_tile_layers(&payload, keep_layers)?;
+        let encoded = prune_tile_layers(&payload, zoom, style, &keep_layers)?;
         let tile_data = encode_tile_payload(&encoded, is_gzip)?;
 
         tx.execute(

@@ -11,6 +11,7 @@ use tile_prune::output::{
     format_bytes, format_histogram_table, format_histograms_by_zoom_section,
     format_metadata_section, ndjson_lines, pad_left, pad_right, resolve_output_format,
 };
+use nu_ansi_term::{Color, Style};
 use tile_prune::pmtiles::{inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles};
 use tile_prune::style::read_style;
 
@@ -114,11 +115,11 @@ fn main() -> Result<()> {
                     println!();
                     if !report.metadata.is_empty() {
                         for line in format_metadata_section(&report.metadata) {
-                            println!("{}", line);
+                            println!("{}", emphasize_section_heading(&line));
                         }
                         println!();
                     }
-                    println!("## Summary");
+                    println!("{}", emphasize_section_heading("## Summary"));
                     println!(
                         "- tiles: {} total: {} max: {} avg: {}",
                         report.overall.tile_count,
@@ -138,7 +139,7 @@ fn main() -> Result<()> {
                     }
                     if !report.by_zoom.is_empty() {
                         println!();
-                        println!("## Zoom");
+                        println!("{}", emphasize_section_heading("## Zoom"));
                         for zoom in report.by_zoom.iter() {
                             println!(
                                 "- z={}: tiles={} total={} max={} avg={}",
@@ -152,20 +153,21 @@ fn main() -> Result<()> {
                     }
                     if !report.histogram.is_empty() {
                         println!();
-                        println!("## Histogram");
+                        println!("{}", emphasize_section_heading("## Histogram"));
                         for line in format_histogram_table(&report.histogram) {
-                            println!("{}", line);
+                            println!("{}", emphasize_table_header(&line));
                         }
                     }
                     if !report.histograms_by_zoom.is_empty() {
                         println!();
                         for line in format_histograms_by_zoom_section(&report.histograms_by_zoom) {
-                            println!("{}", line);
+                            let line = emphasize_section_heading(&line);
+                            println!("{}", emphasize_table_header(&line));
                         }
                     }
                     if !report.file_layers.is_empty() {
                         println!();
-                        println!("## Layers");
+                        println!("{}", emphasize_section_heading("## Layers"));
                         let name_width = report
                             .file_layers
                             .iter()
@@ -209,7 +211,7 @@ fn main() -> Result<()> {
                             .to_string()
                             .len()
                             .max("# of values".len());
-                        println!(
+                        let layers_header = format!(
                             "  {} {} {} {} {}",
                             pad_right("name", name_width),
                             pad_left("# of vertices", vertices_width),
@@ -217,6 +219,7 @@ fn main() -> Result<()> {
                             pad_left("# of keys", keys_width),
                             pad_left("# of values", values_width),
                         );
+                        println!("{}", emphasize_table_header(&layers_header));
                         for layer in report.file_layers.iter() {
                             println!(
                                 "  {} {} {} {} {}",
@@ -230,7 +233,7 @@ fn main() -> Result<()> {
                     }
                     if !report.recommended_buckets.is_empty() {
                         println!();
-                        println!("## Recommendations");
+                        println!("{}", emphasize_section_heading("## Recommendations"));
                         println!(
                             "- buckets: {}",
                             report
@@ -243,12 +246,12 @@ fn main() -> Result<()> {
                     }
                     if let Some(count) = report.bucket_count {
                         println!();
-                        println!("## Bucket");
+                        println!("{}", emphasize_section_heading("## Bucket"));
                         println!("- count: {}", count);
                     }
                     if !report.bucket_tiles.is_empty() {
                         println!();
-                        println!("## Bucket Tiles");
+                        println!("{}", emphasize_section_heading("## Bucket Tiles"));
                         for tile in report.bucket_tiles.iter() {
                             println!(
                                 "- z={}: x={} y={} bytes={}",
@@ -258,7 +261,7 @@ fn main() -> Result<()> {
                     }
                     if !report.top_tiles.is_empty() {
                         println!();
-                        println!("## Top Tiles");
+                        println!("{}", emphasize_section_heading("## Top Tiles"));
                         for tile in report.top_tiles.iter() {
                             println!(
                                 "- z={}: x={} y={} bytes={}",
@@ -268,7 +271,7 @@ fn main() -> Result<()> {
                     }
                     if !report.top_tile_summaries.is_empty() {
                         println!();
-                        println!("## Top Tile Summaries");
+                        println!("{}", emphasize_section_heading("## Top Tile Summaries"));
                         for summary in report.top_tile_summaries.iter() {
                             println!(
                                 "- tile_summary: z={} x={} y={} total_features={}",
@@ -284,7 +287,7 @@ fn main() -> Result<()> {
                     }
                     if let Some(summary) = report.tile_summary.as_ref() {
                         println!();
-                        println!("## Tile Summary");
+                        println!("{}", emphasize_section_heading("## Tile Summary"));
                         println!(
                             "- z={} x={} y={} total_features={}",
                             summary.zoom, summary.x, summary.y, summary.total_features
@@ -380,6 +383,24 @@ fn init_tracing(level: &str) {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
+fn emphasize_section_heading(line: &str) -> String {
+    if line.starts_with("## ") || line.starts_with("### ") {
+        Style::new().bold().paint(line).to_string()
+    } else {
+        line.to_string()
+    }
+}
+
+fn emphasize_table_header(line: &str) -> String {
+    if line.trim_start().starts_with("range")
+        || line.trim_start().starts_with("name")
+        || line.trim_start().starts_with("# of")
+    {
+        Color::Cyan.bold().paint(line).to_string()
+    } else {
+        line.to_string()
+    }
+}
 fn print_prune_summary(stats: &PruneStats) {
     println!("Prune results");
     if stats.removed_features_by_zoom.is_empty() {

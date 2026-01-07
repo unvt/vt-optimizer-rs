@@ -132,6 +132,70 @@ v0.0.4 では以下を **含めない**。
 
 ---
 
+## 1.7 マイルストーン（v0.0.5）
+
+* `inspect --zoom <z>` で zoom 限定集計（tiles/total/max/avg）
+* `inspect --zoom <z> --histogram-buckets <n>` の zoom 別ヒストグラム
+* `inspect --zoom <z> --bucket <i>` の bucket 内 tile 数のみ出力
+
+---
+
+## 1.8 マイルストーン（v0.0.6）
+
+* `inspect --zoom <z> --bucket <i> --list-tiles` で z/x/y 一覧
+* `--limit <n>` で一覧件数制限
+* `--sort size|zxy` で順序指定（既定: size desc）
+
+---
+
+## 1.9 マイルストーン（v0.0.7）
+
+* MVT decode 導入（最小: layer 名 / feature 数）
+* `inspect --tile z/x/y --summary` で layer ごとの feature 数
+
+---
+
+## 1.10 マイルストーン（v0.0.8）
+
+* tile summary を詳細化
+  * layer ごとの property key 数
+  * total feature count
+* `--layer <name>` で layer 指定の絞り込み
+
+---
+
+## 1.11 マイルストーン（v0.0.9）
+
+* zoom 別 histogram に以下を追加
+  * Running avg size
+  * % of tiles
+  * % of level size
+  * Accum % tiles / size
+* `--max-tile-bytes` を基準に warning 判定（文字で表示）
+
+---
+
+## 1.12 マイルストーン（v0.0.10）
+
+* `inspect --zoom <z> --recommend` で高リスク bucket を自動抽出
+* topN tile + summary の連結表示
+
+---
+
+## 1.13 マイルストーン（v0.0.11）
+
+* `inspect --zoom <z> --sample <ratio|count>` を zoom 内 sampling に適用
+* `--fast` プリセット（sample + topn + histogram を固定）
+
+---
+
+## 1.14 マイルストーン（v0.0.12）
+
+* `--output json` で zoom 別 histogram + tile list + summary を出力
+* 大量 tile 向けに NDJSON を検討
+
+---
+
 ## 2. 用語
 
 * **Tile key**: `z/x/y`（内部表現は XYZ）

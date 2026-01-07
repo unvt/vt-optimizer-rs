@@ -138,6 +138,7 @@ fn inspect_mbtiles_topn_and_histogram() {
         topn: 1,
         histogram_buckets: 2,
         no_progress: true,
+        max_tile_bytes: 100,
         zoom: None,
         bucket: None,
         tile: None,
@@ -150,6 +151,18 @@ fn inspect_mbtiles_topn_and_histogram() {
     assert_eq!(report.top_tiles[0].bytes, 30);
     assert_eq!(report.histogram.len(), 2);
     assert_eq!(report.histogram.iter().map(|b| b.count).sum::<u64>(), 2);
+    assert_eq!(report.histogram[0].total_bytes, 10);
+    assert_eq!(report.histogram[1].total_bytes, 30);
+    assert_eq!(report.histogram[0].running_avg_bytes, 10);
+    assert_eq!(report.histogram[1].running_avg_bytes, 20);
+    assert!((report.histogram[0].pct_tiles - 0.5).abs() < 1e-6);
+    assert!((report.histogram[1].pct_tiles - 0.5).abs() < 1e-6);
+    assert!((report.histogram[0].pct_level_bytes - 0.25).abs() < 1e-6);
+    assert!((report.histogram[1].pct_level_bytes - 0.75).abs() < 1e-6);
+    assert!((report.histogram[0].accum_pct_tiles - 0.5).abs() < 1e-6);
+    assert!((report.histogram[1].accum_pct_tiles - 1.0).abs() < 1e-6);
+    assert!((report.histogram[0].accum_pct_level_bytes - 0.25).abs() < 1e-6);
+    assert!((report.histogram[1].accum_pct_level_bytes - 1.0).abs() < 1e-6);
 }
 
 #[test]
@@ -163,6 +176,7 @@ fn inspect_mbtiles_sample_count() {
         topn: 0,
         histogram_buckets: 0,
         no_progress: true,
+        max_tile_bytes: 0,
         zoom: None,
         bucket: None,
         tile: None,

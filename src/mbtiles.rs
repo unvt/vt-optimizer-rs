@@ -40,11 +40,19 @@ pub struct MbtilesReport {
     pub tile_summary: Option<TileSummary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HistogramBucket {
     pub min_bytes: u64,
     pub max_bytes: u64,
     pub count: u64,
+    pub total_bytes: u64,
+    pub running_avg_bytes: u64,
+    pub pct_tiles: f64,
+    pub pct_level_bytes: f64,
+    pub accum_pct_tiles: f64,
+    pub accum_pct_level_bytes: f64,
+    pub avg_near_limit: bool,
+    pub avg_over_limit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -90,6 +98,7 @@ pub struct InspectOptions {
     pub topn: usize,
     pub histogram_buckets: usize,
     pub no_progress: bool,
+    pub max_tile_bytes: u64,
     pub zoom: Option<u8>,
     pub bucket: Option<usize>,
     pub tile: Option<TileCoord>,
@@ -105,6 +114,7 @@ impl Default for InspectOptions {
             topn: 0,
             histogram_buckets: 0,
             no_progress: false,
+            max_tile_bytes: 0,
             zoom: None,
             bucket: None,
             tile: None,
@@ -230,11 +240,14 @@ fn splitmix64(mut x: u64) -> u64 {
 fn build_histogram(
     path: &Path,
     sample: Option<&SampleSpec>,
-    total_tiles: u64,
+    total_tiles_db: u64,
+    total_tiles_used: u64,
+    total_bytes_used: u64,
     buckets: usize,
     min_len: u64,
     max_len: u64,
     zoom: Option<u8>,
+    max_tile_bytes: u64,
 ) -> Result<Vec<HistogramBucket>> {
     if buckets == 0 || min_len > max_len {
         return Ok(Vec::new());
@@ -249,6 +262,7 @@ fn build_histogram(
     let range = (max_len - min_len).max(1);
     let bucket_size = ((range as f64) / buckets as f64).ceil() as u64;
     let mut counts = vec![0u64; buckets];
+    let mut bytes = vec![0u64; buckets];
 
     let mut index: u64 = 0;
     while let Some(row) = rows.next().context("read histogram row")? {
@@ -260,7 +274,7 @@ fn build_histogram(
             }
         }
         index += 1;
-        if !include_sample(index, total_tiles, sample) {
+        if !include_sample(index, total_tiles_db, sample) {
             continue;
         }
         let mut bucket = ((length.saturating_sub(min_len)) / bucket_size) as usize;
@@ -268,6 +282,7 @@ fn build_histogram(
             bucket = buckets - 1;
         }
         counts[bucket] += 1;
+        bytes[bucket] += length;
 
         if let Some(SampleSpec::Count(limit)) = sample {
             if counts.iter().sum::<u64>() >= *limit {
@@ -277,6 +292,9 @@ fn build_histogram(
     }
 
     let mut result = Vec::with_capacity(buckets);
+    let mut accum_count = 0u64;
+    let mut accum_bytes = 0u64;
+    let limit_threshold = (max_tile_bytes as f64) * 0.9;
     for i in 0..buckets {
         let b_min = min_len + bucket_size * i as u64;
         let b_max = if i + 1 == buckets {
@@ -284,10 +302,49 @@ fn build_histogram(
         } else {
             (min_len + bucket_size * (i as u64 + 1)).saturating_sub(1)
         };
+        accum_count += counts[i];
+        accum_bytes += bytes[i];
+        let running_avg = if accum_count == 0 {
+            0
+        } else {
+            accum_bytes / accum_count
+        };
+        let pct_tiles = if total_tiles_used == 0 {
+            0.0
+        } else {
+            counts[i] as f64 / total_tiles_used as f64
+        };
+        let pct_level_bytes = if total_bytes_used == 0 {
+            0.0
+        } else {
+            bytes[i] as f64 / total_bytes_used as f64
+        };
+        let accum_pct_tiles = if total_tiles_used == 0 {
+            0.0
+        } else {
+            accum_count as f64 / total_tiles_used as f64
+        };
+        let accum_pct_level_bytes = if total_bytes_used == 0 {
+            0.0
+        } else {
+            accum_bytes as f64 / total_bytes_used as f64
+        };
+        let avg_over_limit = max_tile_bytes > 0 && (running_avg as f64) > max_tile_bytes as f64;
+        let avg_near_limit = max_tile_bytes > 0
+            && !avg_over_limit
+            && (running_avg as f64) >= limit_threshold;
         result.push(HistogramBucket {
             min_bytes: b_min,
             max_bytes: b_max,
             count: counts[i],
+            total_bytes: bytes[i],
+            running_avg_bytes: running_avg,
+            pct_tiles,
+            pct_level_bytes,
+            accum_pct_tiles,
+            accum_pct_level_bytes,
+            avg_near_limit,
+            avg_over_limit,
         });
     }
     Ok(result)
@@ -550,14 +607,26 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
     };
 
     let histogram = if options.histogram_buckets > 0 && min_len.is_some() {
+        let (level_tiles_used, level_bytes_used) = if let Some(target) = options.zoom {
+            by_zoom
+                .iter()
+                .find(|z| z.zoom == target)
+                .map(|z| (z.stats.tile_count, z.stats.total_bytes))
+                .unwrap_or((0, 0))
+        } else {
+            (overall.tile_count, overall.total_bytes)
+        };
         build_histogram(
             path,
             options.sample.as_ref(),
             total_tiles,
+            level_tiles_used,
+            level_bytes_used,
             options.histogram_buckets,
             min_len.unwrap(),
             max_len.unwrap(),
             options.zoom,
+            options.max_tile_bytes,
         )?
     } else {
         Vec::new()

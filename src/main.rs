@@ -37,6 +37,7 @@ fn main() -> Result<()> {
                 topn: args.topn.unwrap_or(0) as usize,
                 histogram_buckets: args.histogram_buckets as usize,
                 no_progress: args.no_progress,
+                max_tile_bytes: args.max_tile_bytes,
                 zoom: args.zoom,
                 bucket: args.bucket,
                 tile,
@@ -91,9 +92,25 @@ fn main() -> Result<()> {
                     if !report.histogram.is_empty() {
                         println!("histogram:");
                         for bucket in report.histogram.iter() {
+                            let warn = if bucket.avg_over_limit {
+                                "over"
+                            } else if bucket.avg_near_limit {
+                                "near"
+                            } else {
+                                ""
+                            };
                             println!(
-                                "{}-{}: {}",
-                                bucket.min_bytes, bucket.max_bytes, bucket.count
+                                "{}-{}: count={} bytes={} running_avg={} pct_tiles={:.4} pct_size={:.4} accum_pct_tiles={:.4} accum_pct_size={:.4} {}",
+                                bucket.min_bytes,
+                                bucket.max_bytes,
+                                bucket.count,
+                                bucket.total_bytes,
+                                bucket.running_avg_bytes,
+                                bucket.pct_tiles,
+                                bucket.pct_level_bytes,
+                                bucket.accum_pct_tiles,
+                                bucket.accum_pct_level_bytes,
+                                warn
                             );
                         }
                     }

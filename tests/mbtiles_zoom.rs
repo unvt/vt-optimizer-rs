@@ -55,6 +55,7 @@ fn inspect_zoom_limits_stats_and_histogram() {
         topn: 0,
         histogram_buckets: 2,
         no_progress: true,
+        max_tile_bytes: 100,
         zoom: Some(1),
         bucket: Some(0),
         tile: None,
@@ -79,4 +80,7 @@ fn inspect_zoom_limits_stats_and_histogram() {
     assert_eq!(report.histogram.len(), 2);
     assert_eq!(report.histogram[0].count, 1);
     assert_eq!(report.histogram[1].count, 1);
+    assert!((report.histogram[0].pct_tiles - 0.5).abs() < 1e-6);
+    assert!((report.histogram[1].pct_tiles - 0.5).abs() < 1e-6);
+    assert!((report.histogram[1].accum_pct_tiles - 1.0).abs() < 1e-6);
 }

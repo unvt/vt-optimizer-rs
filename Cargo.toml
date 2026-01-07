@@ -17,6 +17,7 @@ varint-rs = "2.2"
 indicatif = "0.17"
 mvt-reader = "2.2.0"
 flate2 = "1"
+nu-ansi-term = "0.50"
 
 [dev-dependencies]
 mvt = "0.10.3"

@@ -904,6 +904,7 @@ dependencies = [
  "indicatif",
  "mvt",
  "mvt-reader",
+ "nu-ansi-term",
  "rusqlite",
  "serde",
  "serde_json",

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use nu_ansi_term::Color;
 use serde_json::json;
 
 use crate::cli::ReportFormat;
@@ -203,11 +204,11 @@ pub fn format_histogram_table(buckets: &[HistogramBucket]) -> Vec<String> {
     ));
     for bucket in buckets.iter().filter(|bucket| bucket.count > 0) {
         let warn = if bucket.avg_over_limit {
-            "!! (over)"
+            Color::Red.paint("!! (over)").to_string()
         } else if bucket.avg_near_limit {
-            "! (near)"
+            Color::Yellow.paint("! (near)").to_string()
         } else {
-            ""
+            String::new()
         };
         let range = format!(
             "{}-{}",

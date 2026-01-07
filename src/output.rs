@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::json;
 
 use crate::cli::ReportFormat;
-use crate::mbtiles::MbtilesReport;
+use crate::mbtiles::{HistogramBucket, MbtilesReport, ZoomHistogram};
 
 pub fn resolve_output_format(requested: ReportFormat, ndjson_compact: bool) -> ReportFormat {
     if ndjson_compact {
@@ -161,4 +161,104 @@ pub fn ndjson_lines(report: &MbtilesReport, mut options: NdjsonOptions) -> Resul
     }
 
     Ok(lines)
+}
+
+pub fn format_histogram_table(buckets: &[HistogramBucket]) -> Vec<String> {
+    if buckets.is_empty() {
+        return Vec::new();
+    }
+    let count_width = buckets
+        .iter()
+        .map(|b| b.count)
+        .max()
+        .unwrap_or(0)
+        .to_string()
+        .len()
+        .max("count".len());
+    let bytes_width = buckets
+        .iter()
+        .map(|b| format_bytes(b.total_bytes).len())
+        .max()
+        .unwrap_or(0)
+        .max("bytes".len());
+    let avg_width = buckets
+        .iter()
+        .map(|b| format_bytes(b.running_avg_bytes).len())
+        .max()
+        .unwrap_or(0)
+        .max("avg".len());
+    let mut lines = Vec::with_capacity(buckets.len() + 1);
+    lines.push(format!(
+        "  {} {} {} {} {} {} {}",
+        pad_right("range", 17),
+        pad_left("count", count_width),
+        pad_left("bytes", bytes_width),
+        pad_left("avg", avg_width),
+        pad_left("%tiles", 7),
+        pad_left("%size", 7),
+        pad_left("acc%tiles", 9),
+    ));
+    for bucket in buckets.iter() {
+        let warn = if bucket.avg_over_limit {
+            "!! (over)"
+        } else if bucket.avg_near_limit {
+            "! (near)"
+        } else {
+            ""
+        };
+        let range = format!(
+            "{}-{}",
+            format_bytes(bucket.min_bytes),
+            format_bytes(bucket.max_bytes)
+        );
+        lines.push(format!(
+            "  {} {} {} {} {:>7.2}% {:>7.2}% {:>9.2}% {}",
+            pad_right(&range, 17),
+            pad_left(&bucket.count.to_string(), count_width),
+            pad_left(&format_bytes(bucket.total_bytes), bytes_width),
+            pad_left(&format_bytes(bucket.running_avg_bytes), avg_width),
+            bucket.pct_tiles * 100.0,
+            bucket.pct_level_bytes * 100.0,
+            bucket.accum_pct_tiles * 100.0,
+            warn
+        ));
+    }
+    lines
+}
+
+pub fn format_histograms_by_zoom_section(histograms: &[ZoomHistogram]) -> Vec<String> {
+    if histograms.is_empty() {
+        return Vec::new();
+    }
+    let mut items = histograms.to_vec();
+    items.sort_by_key(|item| item.zoom);
+    let mut lines = Vec::new();
+    lines.push("## Histogram by Zoom".to_string());
+    for item in items.iter() {
+        lines.push(String::new());
+        lines.push(format!("### z={}", item.zoom));
+        lines.extend(format_histogram_table(&item.buckets));
+    }
+    lines
+}
+
+pub fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes_f >= MB {
+        format!("{:.2}MB", bytes_f / MB)
+    } else if bytes_f >= KB {
+        format!("{:.2}KB", bytes_f / KB)
+    } else {
+        format!("{}B", bytes)
+    }
+}
+
+pub fn pad_right(value: &str, width: usize) -> String {
+    format!("{:<width$}", value, width = width)
+}
+
+pub fn pad_left(value: &str, width: usize) -> String {
+    format!("{:>width$}", value, width = width)
 }

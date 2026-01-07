@@ -7,7 +7,10 @@ use tile_prune::mbtiles::{
     copy_mbtiles, inspect_mbtiles_with_options, parse_sample_spec, parse_tile_spec, InspectOptions,
     TileListOptions, TileSort,
 };
-use tile_prune::output::{ndjson_lines, resolve_output_format};
+use tile_prune::output::{
+    format_bytes, format_histogram_table, format_histograms_by_zoom_section, ndjson_lines,
+    pad_left, pad_right, resolve_output_format,
+};
 use tile_prune::pmtiles::{mbtiles_to_pmtiles, pmtiles_to_mbtiles};
 
 fn main() -> Result<()> {
@@ -134,63 +137,14 @@ fn main() -> Result<()> {
                     if !report.histogram.is_empty() {
                         println!();
                         println!("## Histogram");
-                        let count_width = report
-                            .histogram
-                            .iter()
-                            .map(|b| b.count)
-                            .max()
-                            .unwrap_or(0)
-                            .to_string()
-                            .len()
-                            .max("count".len());
-                        let bytes_width = report
-                            .histogram
-                            .iter()
-                            .map(|b| format_bytes(b.total_bytes).len())
-                            .max()
-                            .unwrap_or(0)
-                            .max("bytes".len());
-                        let avg_width = report
-                            .histogram
-                            .iter()
-                            .map(|b| format_bytes(b.running_avg_bytes).len())
-                            .max()
-                            .unwrap_or(0)
-                            .max("avg".len());
-                        println!(
-                            "  {} {} {} {} {} {} {}",
-                            pad_right("range", 17),
-                            pad_left("count", count_width),
-                            pad_left("bytes", bytes_width),
-                            pad_left("avg", avg_width),
-                            pad_left("%tiles", 7),
-                            pad_left("%size", 7),
-                            pad_left("acc%tiles", 9),
-                        );
-                        for bucket in report.histogram.iter() {
-                            let warn = if bucket.avg_over_limit {
-                                "!! (over)"
-                            } else if bucket.avg_near_limit {
-                                "! (near)"
-                            } else {
-                                ""
-                            };
-                            let range = format!(
-                                "{}-{}",
-                                format_bytes(bucket.min_bytes),
-                                format_bytes(bucket.max_bytes)
-                            );
-                            println!(
-                                "  {} {} {} {} {:>7.2}% {:>7.2}% {:>9.2}% {}",
-                                pad_right(&range, 17),
-                                pad_left(&bucket.count.to_string(), count_width),
-                                pad_left(&format_bytes(bucket.total_bytes), bytes_width),
-                                pad_left(&format_bytes(bucket.running_avg_bytes), avg_width),
-                                bucket.pct_tiles * 100.0,
-                                bucket.pct_level_bytes * 100.0,
-                                bucket.accum_pct_tiles * 100.0,
-                                warn
-                            );
+                        for line in format_histogram_table(&report.histogram) {
+                            println!("{}", line);
+                        }
+                    }
+                    if !report.histograms_by_zoom.is_empty() {
+                        println!();
+                        for line in format_histograms_by_zoom_section(&report.histograms_by_zoom) {
+                            println!("{}", line);
                         }
                     }
                     if !report.file_layers.is_empty() {
@@ -366,25 +320,4 @@ fn init_tracing(level: &str) {
         tracing_subscriber::EnvFilter::new("info")
     });
     tracing_subscriber::fmt().with_env_filter(filter).init();
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    let value = bytes as f64;
-    if value >= MB {
-        format!("{:.2}MB", value / MB)
-    } else if value >= KB {
-        format!("{:.2}KB", value / KB)
-    } else {
-        format!("{}B", bytes)
-    }
-}
-
-fn pad_right(value: &str, width: usize) -> String {
-    format!("{value:width$}")
-}
-
-fn pad_left(value: &str, width: usize) -> String {
-    format!("{value:>width$}")
 }

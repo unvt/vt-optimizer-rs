@@ -1,6 +1,6 @@
 # vt-optimizer-rs
 
-A fast CLI to inspect and prune MBTiles/PMTiles vector tiles. It supports a vt-optimizer compatible legacy interface, modern Mapbox/MapLibre style filters, PMTiles output, and a `vt-compat` mode that mirrors vt-optimizer layer visibility behavior.
+A fast CLI to inspect and optimize MBTiles/PMTiles vector tiles. It supports a vt-optimizer compatible legacy interface, modern Mapbox/MapLibre style filters, PMTiles output, and a `vt-compat` mode that mirrors vt-optimizer layer visibility behavior.
 
 ## Features
 
@@ -38,23 +38,23 @@ vt-optimizer inspect /path/to/tiles.pmtiles
 vt-optimizer inspect /path/to/tiles.mbtiles --output ndjson
 ```
 
-### Optimize (prune)
+### Optimize
 
 ```bash
 # style-based pruning (layer+filter)
 vt-optimizer optimize /path/to/tiles.mbtiles \
-  --output /path/to/tiles.pruned.mbtiles \
+  --output /path/to/tiles.optimized.mbtiles \
   --style /path/to/style.json
 
 # vt-optimizer compatible mode (visibility only)
 vt-optimizer optimize /path/to/tiles.mbtiles \
-  --output /path/to/tiles.pruned.mbtiles \
+  --output /path/to/tiles.optimized.mbtiles \
   --style /path/to/style.json \
   --style-mode vt-compat
 
 # PMTiles optimize
 vt-optimizer optimize /path/to/tiles.pmtiles \
-  --output /path/to/tiles.pruned.pmtiles \
+  --output /path/to/tiles.optimized.pmtiles \
   --style /path/to/style.json
 ```
 
@@ -80,7 +80,7 @@ vt-optimizer simplify /path/to/tiles.pmtiles --z 10 --x 908 --y 396 --tolerance 
 # optimize (no subcommand)
 vt-optimizer -m /path/to/tiles.mbtiles \
   -s /path/to/style.json \
-  -o /path/to/tiles.pruned.mbtiles
+  -o /path/to/tiles.optimized.mbtiles
 
 # inspect a tile summary
 vt-optimizer -m /path/to/tiles.mbtiles -z 10 -x 908 -y 396

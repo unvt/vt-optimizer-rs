@@ -1,13 +1,13 @@
-# SPEC.md — tile-prune
+# SPEC.md — vt-optimizer-rs
 
-* Project: **tile-prune**
+* Project: **vt-optimizer-rs**
 * Type: Single-binary CLI + Rust SDK (library)
 * Status: Draft (living spec)
 * Compatibility baseline: vt-optimizer 準拠（入出力境界・メタデータ方針・警告方針・簡略化の挙動の方向性）
 
 ## 0. 概要
 
-tile-prune は、**Mapbox Vector Tiles (MVT)** を格納した **MBTiles / PMTiles** を対象に、以下を行うツールチェイン（CLI/SDK）です。
+vt-optimizer-rs は、**Mapbox Vector Tiles (MVT)** を格納した **MBTiles / PMTiles** を対象に、以下を行うツールチェイン（CLI/SDK）です。
 
 1. **検査 (inspect)**: タイルサイズ・分布・レイヤー/フィーチャー統計を可観測化
 2. **最適化 (prune)**: Style（Mapbox/MapLibre）解釈に基づき、**不要レイヤー削除 + filter 解釈による feature 単位削除**
@@ -556,7 +556,7 @@ v0.0.4 では以下を **含めない**。
 ### 4.1 コマンド体系
 
 ```
-tile-prune <command> [options] <input> [<output>]
+vt-optimizer <command> [options] <input> [<output>]
 ```
 
 `<command>`:
@@ -748,7 +748,7 @@ SQLite については WAL が「reader/writer の同時進行」に寄与し得
 ### 8.1 提供形態
 
 * `tile_prune` crate（ライブラリ）
-* `tile-prune` binary（CLI）
+* `vt-optimizer` binary（CLI）
 * CLI は SDK を薄く呼ぶだけ（ロジックは SDK に集中）
 
 ### 8.2 SDK の主要 API（案）

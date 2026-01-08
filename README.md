@@ -1,4 +1,4 @@
-# tile-prune
+# vt-optimizer-rs
 
 A fast CLI to inspect and prune MBTiles/PMTiles vector tiles. It supports modern Mapbox/MapLibre style filters, PMTiles output, and a `vt-compat` mode that mirrors vt-optimizer layer visibility behavior.
 
@@ -19,6 +19,8 @@ cargo build --release
 ```
 
 ## Usage
+
+This project ships a `vt-optimizer` CLI. It supports both the modern subcommands and a vt-optimizer compatible legacy interface (no subcommand).
 
 ### Inspect
 
@@ -57,6 +59,18 @@ cargo run --quiet -- optimize /path/to/tiles.pmtiles \
 
 ```bash
 cargo run --quiet -- copy /path/to/tiles.mbtiles --output /path/to/tiles.copy.mbtiles
+```
+
+### Legacy (vt-optimizer compatible)
+
+```bash
+# optimize (no subcommand)
+cargo run --quiet -- -m /path/to/tiles.mbtiles \
+  -s /path/to/style.json \
+  -o /path/to/tiles.pruned.mbtiles
+
+# inspect a tile summary
+cargo run --quiet -- -m /path/to/tiles.mbtiles -z 10 -x 908 -y 396
 ```
 
 ## Style modes

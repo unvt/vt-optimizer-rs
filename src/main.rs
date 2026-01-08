@@ -23,343 +23,16 @@ fn main() -> Result<()> {
     init_tracing(&cli.log);
 
     match cli.command {
-        Command::Inspect(args) => {
-            let output = resolve_output_format(args.output, args.ndjson_compact);
-            if args.ndjson_lite && output != ReportFormat::Ndjson {
-                anyhow::bail!("--ndjson-lite requires --output ndjson");
-            }
-            let sample = match args.sample.as_deref() {
-                Some(value) => Some(parse_sample_spec(value)?),
-                None => None,
-            };
-            let tile = match args.tile.as_deref() {
-                Some(value) => Some(parse_tile_spec(value)?),
-                None => None,
-            };
-            if args.summary && tile.is_none() {
-                anyhow::bail!("--summary requires --tile z/x/y");
-            }
-            if tile.is_some() && !args.summary {
-                anyhow::bail!("--tile requires --summary");
-            }
-            if args.layer.is_some() && !args.summary {
-                anyhow::bail!("--layer requires --summary");
-            }
-            if args.recommend && args.zoom.is_none() {
-                anyhow::bail!("--recommend requires --zoom");
-            }
-            if args.recommend && args.histogram_buckets == 0 {
-                anyhow::bail!("--recommend requires --histogram-buckets");
-            }
-            let topn = if args.recommend && args.topn.is_none() {
-                Some(5)
-            } else {
-                args.topn
-            };
-            let (sample, topn, histogram_buckets) = if args.fast {
-                (Some(tile_prune::mbtiles::SampleSpec::Ratio(0.1)), Some(5), 10)
-            } else {
-                (sample, topn, args.histogram_buckets as usize)
-            };
-            let options = InspectOptions {
-                sample,
-                topn: topn.unwrap_or(0) as usize,
-                histogram_buckets,
-                no_progress: args.no_progress,
-                max_tile_bytes: args.max_tile_bytes,
-                zoom: args.zoom,
-                bucket: args.bucket,
-                tile,
-                summary: args.summary,
-                layer: args.layer.clone(),
-                recommend: args.recommend,
-                include_layer_list: output == ReportFormat::Text,
-                list_tiles: if args.list_tiles {
-                    Some(TileListOptions {
-                        limit: args.limit,
-                        sort: match args.sort {
-                            TileSortArg::Size => TileSort::Size,
-                            TileSortArg::Zxy => TileSort::Zxy,
-                        },
-                    })
-                } else {
-                    None
-                },
-            };
-            let input_format = tile_prune::format::TileFormat::from_extension(&args.input)
-                .ok_or_else(|| anyhow::anyhow!("cannot infer input format from path"))?;
-            let report = match input_format {
-                tile_prune::format::TileFormat::Mbtiles => {
-                    inspect_mbtiles_with_options(&args.input, options)?
-                }
-                tile_prune::format::TileFormat::Pmtiles => {
-                    inspect_pmtiles_with_options(&args.input, &options)?
-                }
-            };
-            match output {
-                ReportFormat::Json => {
-                    let json = serde_json::to_string_pretty(&report)?;
-                    println!("{}", json);
-                }
-                ReportFormat::Ndjson => {
-                    let options = tile_prune::output::NdjsonOptions {
-                        include_summary: !args.ndjson_lite && !args.ndjson_compact,
-                        compact: args.ndjson_compact,
-                    };
-                    for line in ndjson_lines(&report, options)? {
-                        println!("{}", line);
-                    }
-                }
-                ReportFormat::Text => {
-                    println!(
-                        "# Vector tile inspection of [{}] by tile-prune",
-                        args.input.display()
-                    );
-                    println!();
-                    if !report.metadata.is_empty() {
-                        for line in format_metadata_section(&report.metadata) {
-                            println!("{}", emphasize_section_heading(&line));
-                        }
-                        println!();
-                    }
-                    println!("{}", emphasize_section_heading("## Summary"));
-                    println!(
-                        "- tiles: {} total: {} max: {} avg: {}",
-                        report.overall.tile_count,
-                        format_bytes(report.overall.total_bytes),
-                        format_bytes(report.overall.max_bytes),
-                        format_bytes(report.overall.avg_bytes)
-                    );
-                    println!(
-                        "- empty_tiles: {} empty_ratio: {:.4}",
-                        report.empty_tiles, report.empty_ratio
-                    );
-                    if report.sampled {
-                        println!(
-                            "- sample: used={} total={}",
-                            report.sample_used_tiles, report.sample_total_tiles
-                        );
-                    }
-                    if !report.by_zoom.is_empty() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Zoom"));
-                        for zoom in report.by_zoom.iter() {
-                            println!(
-                                "- z={}: tiles={} total={} max={} avg={}",
-                                zoom.zoom,
-                                zoom.stats.tile_count,
-                                format_bytes(zoom.stats.total_bytes),
-                                format_bytes(zoom.stats.max_bytes),
-                                format_bytes(zoom.stats.avg_bytes)
-                            );
-                        }
-                    }
-                    if !report.histogram.is_empty() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Histogram"));
-                        for line in format_histogram_table(&report.histogram) {
-                            println!("{}", emphasize_table_header(&line));
-                        }
-                    }
-                    if !report.histograms_by_zoom.is_empty() {
-                        println!();
-                        for line in format_histograms_by_zoom_section(&report.histograms_by_zoom) {
-                            let line = emphasize_section_heading(&line);
-                            println!("{}", emphasize_table_header(&line));
-                        }
-                    }
-                    if !report.file_layers.is_empty() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Layers"));
-                        let name_width = report
-                            .file_layers
-                            .iter()
-                            .map(|l| l.name.len())
-                            .max()
-                            .unwrap_or(4)
-                            .max("name".len());
-                        let vertices_width = report
-                            .file_layers
-                            .iter()
-                            .map(|l| l.vertex_count)
-                            .max()
-                            .unwrap_or(0)
-                            .to_string()
-                            .len()
-                            .max("# of vertices".len());
-                        let features_width = report
-                            .file_layers
-                            .iter()
-                            .map(|l| l.feature_count)
-                            .max()
-                            .unwrap_or(0)
-                            .to_string()
-                            .len()
-                            .max("# of features".len());
-                        let keys_width = report
-                            .file_layers
-                            .iter()
-                            .map(|l| l.property_key_count)
-                            .max()
-                            .unwrap_or(0)
-                            .to_string()
-                            .len()
-                            .max("# of keys".len());
-                        let values_width = report
-                            .file_layers
-                            .iter()
-                            .map(|l| l.property_value_count)
-                            .max()
-                            .unwrap_or(0)
-                            .to_string()
-                            .len()
-                            .max("# of values".len());
-                        let layers_header = format!(
-                            "  {} {} {} {} {}",
-                            pad_right("name", name_width),
-                            pad_left("# of vertices", vertices_width),
-                            pad_left("# of features", features_width),
-                            pad_left("# of keys", keys_width),
-                            pad_left("# of values", values_width),
-                        );
-                        println!("{}", emphasize_table_header(&layers_header));
-                        for layer in report.file_layers.iter() {
-                            println!(
-                                "  {} {} {} {} {}",
-                                pad_right(&layer.name, name_width),
-                                pad_left(&layer.vertex_count.to_string(), vertices_width),
-                                pad_left(&layer.feature_count.to_string(), features_width),
-                                pad_left(&layer.property_key_count.to_string(), keys_width),
-                                pad_left(&layer.property_value_count.to_string(), values_width),
-                            );
-                        }
-                    }
-                    if !report.recommended_buckets.is_empty() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Recommendations"));
-                        println!(
-                            "- buckets: {}",
-                            report
-                                .recommended_buckets
-                                .iter()
-                                .map(|idx| idx.to_string())
-                                .collect::<Vec<_>>()
-                                .join(",")
-                        );
-                    }
-                    if let Some(count) = report.bucket_count {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Bucket"));
-                        println!("- count: {}", count);
-                    }
-                    if !report.bucket_tiles.is_empty() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Bucket Tiles"));
-                        for tile in report.bucket_tiles.iter() {
-                            println!(
-                                "- z={}: x={} y={} bytes={}",
-                                tile.zoom, tile.x, tile.y, tile.bytes
-                            );
-                        }
-                    }
-                    if !report.top_tiles.is_empty() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Top Tiles"));
-                        for tile in report.top_tiles.iter() {
-                            println!(
-                                "- z={}: x={} y={} bytes={}",
-                                tile.zoom, tile.x, tile.y, tile.bytes
-                            );
-                        }
-                    }
-                    if !report.top_tile_summaries.is_empty() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Top Tile Summaries"));
-                        for summary in report.top_tile_summaries.iter() {
-                            println!(
-                                "- tile_summary: z={} x={} y={} total_features={}",
-                                summary.zoom, summary.x, summary.y, summary.total_features
-                            );
-                            for layer in summary.layers.iter() {
-                                println!(
-                                    "  layer: {} features={} property_keys={}",
-                                    layer.name, layer.feature_count, layer.property_key_count
-                                );
-                            }
-                        }
-                    }
-                    if let Some(summary) = report.tile_summary.as_ref() {
-                        println!();
-                        println!("{}", emphasize_section_heading("## Tile Summary"));
-                        println!(
-                            "- z={} x={} y={} total_features={}",
-                            summary.zoom, summary.x, summary.y, summary.total_features
-                        );
-                        for layer in summary.layers.iter() {
-                            println!(
-                                "  layer: {} features={} property_keys={}",
-                                layer.name, layer.feature_count, layer.property_key_count
-                            );
-                            if !layer.property_keys.is_empty() {
-                                println!("    keys: {}", layer.property_keys.join(","));
-                            }
-                        }
-                    }
-                }
-            }
+        Some(Command::Inspect(args)) => {
+            run_inspect(args)?;
         }
-        Command::Optimize(args) => {
-            let decision = plan_optimize(
-                &args.input,
-                args.output.as_deref(),
-                args.input_format.as_deref(),
-                args.output_format.as_deref(),
-            )?;
-            let _output_path =
-                resolve_output_path(&args.input, args.output.as_deref(), decision.output);
-            let style_path = args
-                .style
-                .as_ref()
-                .context("--style is required for optimize")?;
-            if args.style_mode != tile_prune::cli::StyleMode::Layer
-                && args.style_mode != tile_prune::cli::StyleMode::LayerFilter
-                && args.style_mode != tile_prune::cli::StyleMode::VtCompat
-            {
-                anyhow::bail!(
-                    "v0.0.55 only supports --style-mode layer, layer+filter, or vt-compat"
-                );
-            }
-            println!("Prune steps");
-            println!("- Parsing style file");
-            let style = read_style(style_path)?;
-            match (decision.input, decision.output) {
-                (tile_prune::format::TileFormat::Mbtiles, tile_prune::format::TileFormat::Mbtiles) => {
-                    let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
-                    println!("- Processing tiles");
-                    let stats = prune_mbtiles_layer_only(&args.input, &_output_path, &style, apply_filters)?;
-                    println!("- Writing output file to {}", _output_path.display());
-                    print_prune_summary(&stats);
-                }
-                (tile_prune::format::TileFormat::Pmtiles, tile_prune::format::TileFormat::Pmtiles) => {
-                    let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
-                    println!("- Processing tiles");
-                    let stats =
-                        prune_pmtiles_layer_only(&args.input, &_output_path, &style, apply_filters)?;
-                    println!("- Writing output file to {}", _output_path.display());
-                    print_prune_summary(&stats);
-                }
-                _ => {
-                    anyhow::bail!(
-                        "v0.0.47 only supports matching input/output formats for optimize"
-                    );
-                }
-            }
-            println!("optimize: input={} output={}", args.input.display(), _output_path.display());
+        Some(Command::Optimize(args)) => {
+            run_optimize(args)?;
         }
-        Command::Simplify(args) => {
+        Some(Command::Simplify(args)) => {
             println!("simplify: input={} z={} x={} y={}", args.input.display(), args.z, args.x, args.y);
         }
-        Command::Copy(args) => {
+        Some(Command::Copy(args)) => {
             let decision = plan_copy(
                 &args.input,
                 args.output.as_deref(),
@@ -384,8 +57,96 @@ fn main() -> Result<()> {
             }
             println!("copy: input={}", args.input.display());
         }
-        Command::Verify(args) => {
+        Some(Command::Verify(args)) => {
             println!("verify: input={}", args.input.display());
+        }
+        None => {
+            let Some(input) = cli.mbtiles.as_ref() else {
+                anyhow::bail!("no subcommand or --mbtiles provided");
+            };
+            if cli.style.is_some() {
+                let args = tile_prune::cli::OptimizeArgs {
+                    input: input.clone(),
+                    output: cli.output.clone(),
+                    input_format: None,
+                    output_format: None,
+                    style: cli.style.clone(),
+                    style_mode: tile_prune::cli::StyleMode::VtCompat,
+                    max_tile_bytes: 1_280_000,
+                    threads: None,
+                    io_batch: 1_000,
+                    checkpoint: None,
+                    resume: false,
+                };
+                run_optimize(args)?;
+                return Ok(());
+            }
+            if let (Some(x), Some(y), Some(z)) = (cli.x, cli.y, cli.z) {
+                if !cli.layer.is_empty() || cli.tolerance.is_some() {
+                    let args = tile_prune::cli::SimplifyArgs {
+                        input: input.clone(),
+                        output: cli.output.clone(),
+                        z,
+                        x,
+                        y,
+                        layer: cli.layer.clone(),
+                        tolerance: cli.tolerance,
+                    };
+                    println!(
+                        "simplify: input={} z={} x={} y={}",
+                        args.input.display(),
+                        args.z,
+                        args.x,
+                        args.y
+                    );
+                    return Ok(());
+                }
+                let args = tile_prune::cli::InspectArgs {
+                    input: input.clone(),
+                    max_tile_bytes: 1_280_000,
+                    histogram_buckets: 10,
+                    topn: None,
+                    sample: None,
+                    output: tile_prune::cli::ReportFormat::Text,
+                    no_progress: false,
+                    zoom: None,
+                    bucket: None,
+                    tile: Some(format!("{}/{}/{}", z, x, y)),
+                    summary: true,
+                    layer: None,
+                    recommend: false,
+                    fast: false,
+                    list_tiles: false,
+                    limit: 100,
+                    sort: tile_prune::cli::TileSortArg::Size,
+                    ndjson_lite: false,
+                    ndjson_compact: false,
+                };
+                run_inspect(args)?;
+                return Ok(());
+            }
+            let args = tile_prune::cli::InspectArgs {
+                input: input.clone(),
+                max_tile_bytes: 1_280_000,
+                histogram_buckets: 10,
+                topn: None,
+                sample: None,
+                output: tile_prune::cli::ReportFormat::Text,
+                no_progress: false,
+                zoom: None,
+                bucket: None,
+                tile: None,
+                summary: false,
+                layer: None,
+                recommend: false,
+                fast: false,
+                list_tiles: false,
+                limit: 100,
+                sort: tile_prune::cli::TileSortArg::Size,
+                ndjson_lite: false,
+                ndjson_compact: false,
+            };
+            run_inspect(args)?;
         }
     }
 
@@ -397,6 +158,345 @@ fn init_tracing(level: &str) {
         tracing_subscriber::EnvFilter::new("info")
     });
     tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
+fn run_inspect(args: tile_prune::cli::InspectArgs) -> Result<()> {
+    let output = resolve_output_format(args.output, args.ndjson_compact);
+    if args.ndjson_lite && output != ReportFormat::Ndjson {
+        anyhow::bail!("--ndjson-lite requires --output ndjson");
+    }
+    let sample = match args.sample.as_deref() {
+        Some(value) => Some(parse_sample_spec(value)?),
+        None => None,
+    };
+    let tile = match args.tile.as_deref() {
+        Some(value) => Some(parse_tile_spec(value)?),
+        None => None,
+    };
+    if args.summary && tile.is_none() {
+        anyhow::bail!("--summary requires --tile z/x/y");
+    }
+    if tile.is_some() && !args.summary {
+        anyhow::bail!("--tile requires --summary");
+    }
+    if args.layer.is_some() && !args.summary {
+        anyhow::bail!("--layer requires --summary");
+    }
+    if args.recommend && args.zoom.is_none() {
+        anyhow::bail!("--recommend requires --zoom");
+    }
+    if args.recommend && args.histogram_buckets == 0 {
+        anyhow::bail!("--recommend requires --histogram-buckets");
+    }
+    let topn = if args.recommend && args.topn.is_none() {
+        Some(5)
+    } else {
+        args.topn
+    };
+    let (sample, topn, histogram_buckets) = if args.fast {
+        (Some(tile_prune::mbtiles::SampleSpec::Ratio(0.1)), Some(5), 10)
+    } else {
+        (sample, topn, args.histogram_buckets as usize)
+    };
+    let options = InspectOptions {
+        sample,
+        topn: topn.unwrap_or(0) as usize,
+        histogram_buckets,
+        no_progress: args.no_progress,
+        max_tile_bytes: args.max_tile_bytes,
+        zoom: args.zoom,
+        bucket: args.bucket,
+        tile,
+        summary: args.summary,
+        layer: args.layer.clone(),
+        recommend: args.recommend,
+        include_layer_list: output == ReportFormat::Text,
+        list_tiles: if args.list_tiles {
+            Some(TileListOptions {
+                limit: args.limit,
+                sort: match args.sort {
+                    TileSortArg::Size => TileSort::Size,
+                    TileSortArg::Zxy => TileSort::Zxy,
+                },
+            })
+        } else {
+            None
+        },
+    };
+    let input_format = tile_prune::format::TileFormat::from_extension(&args.input)
+        .ok_or_else(|| anyhow::anyhow!("cannot infer input format from path"))?;
+    let report = match input_format {
+        tile_prune::format::TileFormat::Mbtiles => {
+            inspect_mbtiles_with_options(&args.input, options)?
+        }
+        tile_prune::format::TileFormat::Pmtiles => {
+            inspect_pmtiles_with_options(&args.input, &options)?
+        }
+    };
+    match output {
+        ReportFormat::Json => {
+            let json = serde_json::to_string_pretty(&report)?;
+            println!("{}", json);
+        }
+        ReportFormat::Ndjson => {
+            let options = tile_prune::output::NdjsonOptions {
+                include_summary: !args.ndjson_lite && !args.ndjson_compact,
+                compact: args.ndjson_compact,
+            };
+            for line in ndjson_lines(&report, options)? {
+                println!("{}", line);
+            }
+        }
+        ReportFormat::Text => {
+            println!(
+                "# Vector tile inspection of [{}] by vt-optimizer",
+                args.input.display()
+            );
+            println!();
+            if !report.metadata.is_empty() {
+                for line in format_metadata_section(&report.metadata) {
+                    println!("{}", emphasize_section_heading(&line));
+                }
+                println!();
+            }
+            println!("{}", emphasize_section_heading("## Summary"));
+            println!(
+                "- tiles: {} total: {} max: {} avg: {}",
+                report.overall.tile_count,
+                format_bytes(report.overall.total_bytes),
+                format_bytes(report.overall.max_bytes),
+                format_bytes(report.overall.avg_bytes)
+            );
+            println!(
+                "- empty_tiles: {} empty_ratio: {:.4}",
+                report.empty_tiles, report.empty_ratio
+            );
+            if report.sampled {
+                println!(
+                    "- sample: used={} total={}",
+                    report.sample_used_tiles, report.sample_total_tiles
+                );
+            }
+            if !report.by_zoom.is_empty() {
+                println!();
+                println!("{}", emphasize_section_heading("## Zoom"));
+                for zoom in report.by_zoom.iter() {
+                    println!(
+                        "- z={}: tiles={} total={} max={} avg={}",
+                        zoom.zoom,
+                        zoom.stats.tile_count,
+                        format_bytes(zoom.stats.total_bytes),
+                        format_bytes(zoom.stats.max_bytes),
+                        format_bytes(zoom.stats.avg_bytes)
+                    );
+                }
+            }
+            if !report.histogram.is_empty() {
+                println!();
+                println!("{}", emphasize_section_heading("## Histogram"));
+                for line in format_histogram_table(&report.histogram) {
+                    println!("{}", emphasize_table_header(&line));
+                }
+            }
+            if !report.histograms_by_zoom.is_empty() {
+                println!();
+                for line in format_histograms_by_zoom_section(&report.histograms_by_zoom) {
+                    let line = emphasize_section_heading(&line);
+                    println!("{}", emphasize_table_header(&line));
+                }
+            }
+            if !report.file_layers.is_empty() {
+                println!();
+                println!("{}", emphasize_section_heading("## Layers"));
+                let name_width = report
+                    .file_layers
+                    .iter()
+                    .map(|l| l.name.len())
+                    .max()
+                    .unwrap_or(4)
+                    .max("name".len());
+                let vertices_width = report
+                    .file_layers
+                    .iter()
+                    .map(|l| l.vertex_count)
+                    .max()
+                    .unwrap_or(0)
+                    .to_string()
+                    .len()
+                    .max("# of vertices".len());
+                let features_width = report
+                    .file_layers
+                    .iter()
+                    .map(|l| l.feature_count)
+                    .max()
+                    .unwrap_or(0)
+                    .to_string()
+                    .len()
+                    .max("# of features".len());
+                let keys_width = report
+                    .file_layers
+                    .iter()
+                    .map(|l| l.property_key_count)
+                    .max()
+                    .unwrap_or(0)
+                    .to_string()
+                    .len()
+                    .max("# of keys".len());
+                let values_width = report
+                    .file_layers
+                    .iter()
+                    .map(|l| l.property_value_count)
+                    .max()
+                    .unwrap_or(0)
+                    .to_string()
+                    .len()
+                    .max("# of values".len());
+                let layers_header = format!(
+                    "  {} {} {} {} {}",
+                    pad_right("name", name_width),
+                    pad_left("# of vertices", vertices_width),
+                    pad_left("# of features", features_width),
+                    pad_left("# of keys", keys_width),
+                    pad_left("# of values", values_width),
+                );
+                println!("{}", emphasize_table_header(&layers_header));
+                for layer in report.file_layers.iter() {
+                    println!(
+                        "  {} {} {} {} {}",
+                        pad_right(&layer.name, name_width),
+                        pad_left(&layer.vertex_count.to_string(), vertices_width),
+                        pad_left(&layer.feature_count.to_string(), features_width),
+                        pad_left(&layer.property_key_count.to_string(), keys_width),
+                        pad_left(&layer.property_value_count.to_string(), values_width),
+                    );
+                }
+            }
+            if !report.recommended_buckets.is_empty() {
+                println!();
+                println!("{}", emphasize_section_heading("## Recommendations"));
+                println!(
+                    "- buckets: {}",
+                    report
+                        .recommended_buckets
+                        .iter()
+                        .map(|idx| idx.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+            }
+            if let Some(count) = report.bucket_count {
+                println!();
+                println!("{}", emphasize_section_heading("## Bucket"));
+                println!("- count: {}", count);
+            }
+            if !report.bucket_tiles.is_empty() {
+                println!();
+                println!("{}", emphasize_section_heading("## Bucket Tiles"));
+                for tile in report.bucket_tiles.iter() {
+                    println!(
+                        "- z={}: x={} y={} bytes={}",
+                        tile.zoom, tile.x, tile.y, tile.bytes
+                    );
+                }
+            }
+            if !report.top_tiles.is_empty() {
+                println!();
+                println!("{}", emphasize_section_heading("## Top Tiles"));
+                for tile in report.top_tiles.iter() {
+                    println!(
+                        "- z={}: x={} y={} bytes={}",
+                        tile.zoom, tile.x, tile.y, tile.bytes
+                    );
+                }
+            }
+            if !report.top_tile_summaries.is_empty() {
+                println!();
+                println!("{}", emphasize_section_heading("## Top Tile Summaries"));
+                for summary in report.top_tile_summaries.iter() {
+                    println!(
+                        "- tile_summary: z={} x={} y={} total_features={}",
+                        summary.zoom, summary.x, summary.y, summary.total_features
+                    );
+                    for layer in summary.layers.iter() {
+                        println!(
+                            "  layer: {} features={} property_keys={}",
+                            layer.name, layer.feature_count, layer.property_key_count
+                        );
+                    }
+                }
+            }
+            if let Some(summary) = report.tile_summary.as_ref() {
+                println!();
+                println!("{}", emphasize_section_heading("## Tile Summary"));
+                println!(
+                    "- z={} x={} y={} total_features={}",
+                    summary.zoom, summary.x, summary.y, summary.total_features
+                );
+                for layer in summary.layers.iter() {
+                    println!(
+                        "  layer: {} features={} property_keys={}",
+                        layer.name, layer.feature_count, layer.property_key_count
+                    );
+                    if !layer.property_keys.is_empty() {
+                        println!("    keys: {}", layer.property_keys.join(","));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_optimize(args: tile_prune::cli::OptimizeArgs) -> Result<()> {
+    let decision = plan_optimize(
+        &args.input,
+        args.output.as_deref(),
+        args.input_format.as_deref(),
+        args.output_format.as_deref(),
+    )?;
+    let output_path = resolve_output_path(&args.input, args.output.as_deref(), decision.output);
+    let style_path = args
+        .style
+        .as_ref()
+        .context("--style is required for optimize")?;
+    if args.style_mode != tile_prune::cli::StyleMode::Layer
+        && args.style_mode != tile_prune::cli::StyleMode::LayerFilter
+        && args.style_mode != tile_prune::cli::StyleMode::VtCompat
+    {
+        anyhow::bail!(
+            "v0.0.55 only supports --style-mode layer, layer+filter, or vt-compat"
+        );
+    }
+    println!("Prune steps");
+    println!("- Parsing style file");
+    let style = read_style(style_path)?;
+    match (decision.input, decision.output) {
+        (tile_prune::format::TileFormat::Mbtiles, tile_prune::format::TileFormat::Mbtiles) => {
+            let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
+            println!("- Processing tiles");
+            let stats =
+                prune_mbtiles_layer_only(&args.input, &output_path, &style, apply_filters)?;
+            println!("- Writing output file to {}", output_path.display());
+            print_prune_summary(&stats);
+        }
+        (tile_prune::format::TileFormat::Pmtiles, tile_prune::format::TileFormat::Pmtiles) => {
+            let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
+            println!("- Processing tiles");
+            let stats =
+                prune_pmtiles_layer_only(&args.input, &output_path, &style, apply_filters)?;
+            println!("- Writing output file to {}", output_path.display());
+            print_prune_summary(&stats);
+        }
+        _ => {
+            anyhow::bail!("v0.0.47 only supports matching input/output formats for optimize");
+        }
+    }
+    println!(
+        "optimize: input={} output={}",
+        args.input.display(),
+        output_path.display()
+    );
+    Ok(())
 }
 
 fn emphasize_section_heading(line: &str) -> String {

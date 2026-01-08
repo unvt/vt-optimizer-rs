@@ -1,8 +1,8 @@
-# PRD.md — tile-prune プロダクト要求仕様書
+# PRD.md — vt-optimizer-rs プロダクト要求仕様書
 
 ## 1. 概要
 
-tile-prune は、Mapbox Vector Tiles (MVT) を格納する MBTiles / PMTiles を対象に、検査・最適化・簡略化を行う CLI ツール兼 SDK である。
+vt-optimizer-rs は、Mapbox Vector Tiles (MVT) を格納する MBTiles / PMTiles を対象に、検査・最適化・簡略化を行う CLI ツール兼 SDK である。
 
 - 対応入出力: MBTiles (SQLite), PMTiles v3
 - 主要価値:
@@ -56,17 +56,17 @@ tile-prune は、Mapbox Vector Tiles (MVT) を格納する MBTiles / PMTiles を
 
 ## 7. 機能要件（MVP）
 ### 7.1 CLIコマンド
-- `tile-prune inspect <input>`
-- `tile-prune optimize <input> --style <style.json> [--out <output>] [--out-format mbtiles|pmtiles]`
-- `tile-prune simplify <input> --z <z> --x <x> --y <y> --layer <name> --tolerance <float> [--out <output>]`
-- `tile-prune verify <input>`（任意：整合性チェック）
+- `vt-optimizer inspect <input>`
+- `vt-optimizer optimize <input> --style <style.json> [--out <output>] [--out-format mbtiles|pmtiles]`
+- `vt-optimizer simplify <input> --z <z> --x <x> --y <y> --layer <name> --tolerance <float> [--out <output>]`
+- `vt-optimizer verify <input>`（任意：整合性チェック）
 
 ### 7.2 入出力フォーマット
 - 入力: MBTiles / PMTiles(v3)
 - 出力: ユーザー指定。未指定なら入力と同一。
 - “ffmpeg的”ルール:
   - `--out` の拡張子が `.pmtiles` なら PMTiles v3、`.mbtiles` なら MBTiles。
-  - `--out` が未指定なら `<input>.tile-prune.<ext>` を生成（extは入力に準拠）。
+  - `--out` が未指定なら `<input>.vt-optimizer.<ext>` を生成（extは入力に準拠）。
 
 ### 7.3 既定値
 - `--max-tile-bytes` 既定: 1,280,000 bytes（≒1250 KiB）。超過は **警告**（失敗にしない）。

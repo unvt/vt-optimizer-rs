@@ -5,9 +5,9 @@ use tile_prune::cli::ReportFormat;
 
 #[test]
 fn parse_optimize_minimal() {
-    let cli = Cli::parse_from(["tile-prune", "optimize", "hoge.mbtiles"]);
+    let cli = Cli::parse_from(["vt-optimizer", "optimize", "hoge.mbtiles"]);
     match cli.command {
-        Command::Optimize(args) => {
+        Some(Command::Optimize(args)) => {
             assert_eq!(args.input.as_os_str(), "hoge.mbtiles");
             assert_eq!(args.output, None);
             assert_eq!(args.input_format, None);
@@ -27,7 +27,7 @@ fn parse_optimize_minimal() {
 #[test]
 fn parse_optimize_options() {
     let cli = Cli::parse_from([
-        "tile-prune",
+        "vt-optimizer",
         "optimize",
         "planet.mbtiles",
         "--output",
@@ -52,7 +52,7 @@ fn parse_optimize_options() {
     ]);
 
     match cli.command {
-        Command::Optimize(args) => {
+        Some(Command::Optimize(args)) => {
             assert_eq!(args.input.as_os_str(), "planet.mbtiles");
             assert_eq!(args.output.unwrap().as_os_str(), "out.pmtiles");
             assert_eq!(args.input_format.unwrap(), "mbtiles");
@@ -71,31 +71,31 @@ fn parse_optimize_options() {
 
 #[test]
 fn parse_optimize_style_modes() {
-    let cli = Cli::parse_from(["tile-prune", "optimize", "in.mbtiles", "--style-mode", "none"]);
+    let cli = Cli::parse_from(["vt-optimizer", "optimize", "in.mbtiles", "--style-mode", "none"]);
     match cli.command {
-        Command::Optimize(args) => {
+        Some(Command::Optimize(args)) => {
             assert_eq!(args.style_mode, StyleMode::None);
         }
         _ => panic!("expected optimize command"),
     }
 
-    let cli = Cli::parse_from(["tile-prune", "optimize", "in.mbtiles", "--style-mode", "layer"]);
+    let cli = Cli::parse_from(["vt-optimizer", "optimize", "in.mbtiles", "--style-mode", "layer"]);
     match cli.command {
-        Command::Optimize(args) => {
+        Some(Command::Optimize(args)) => {
             assert_eq!(args.style_mode, StyleMode::Layer);
         }
         _ => panic!("expected optimize command"),
     }
 
     let cli = Cli::parse_from([
-        "tile-prune",
+        "vt-optimizer",
         "optimize",
         "in.mbtiles",
         "--style-mode",
         "vt-compat",
     ]);
     match cli.command {
-        Command::Optimize(args) => {
+        Some(Command::Optimize(args)) => {
             assert_eq!(args.style_mode, StyleMode::VtCompat);
         }
         _ => panic!("expected optimize command"),
@@ -105,7 +105,7 @@ fn parse_optimize_style_modes() {
 #[test]
 fn parse_inspect_options() {
     let cli = Cli::parse_from([
-        "tile-prune",
+        "vt-optimizer",
         "inspect",
         "input.mbtiles",
         "--sample",
@@ -138,7 +138,7 @@ fn parse_inspect_options() {
     ]);
 
     match cli.command {
-        Command::Inspect(args) => {
+        Some(Command::Inspect(args)) => {
             assert_eq!(args.input.as_os_str(), "input.mbtiles");
             assert_eq!(args.sample.as_deref(), Some("0.1"));
             assert_eq!(args.topn, Some(5));
@@ -164,9 +164,9 @@ fn parse_inspect_options() {
 
 #[test]
 fn parse_inspect_output_ndjson() {
-    let cli = Cli::parse_from(["tile-prune", "inspect", "input.mbtiles", "--output", "ndjson"]);
+    let cli = Cli::parse_from(["vt-optimizer", "inspect", "input.mbtiles", "--output", "ndjson"]);
     match cli.command {
-        Command::Inspect(args) => {
+        Some(Command::Inspect(args)) => {
             assert_eq!(args.output, ReportFormat::Ndjson);
         }
         _ => panic!("expected inspect command"),

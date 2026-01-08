@@ -1,6 +1,6 @@
 # ARD.md — Architecture Record (Decisions)
 
-本書は tile-prune のアーキテクチャ上の意思決定を記録する。各項目は “現時点の決定” とし、破壊的変更が必要になった場合は追記/改訂する。
+本書は vt-optimizer-rs のアーキテクチャ上の意思決定を記録する。各項目は “現時点の決定” とし、破壊的変更が必要になった場合は追記/改訂する。
 
 ## ARD-0001: プロダクト形態（CLI + SDK）
 - Status: Accepted
@@ -77,7 +77,7 @@
 ## ADR-0009: 実装言語は Rust（CLI + SDK 共通コア）
 - Status: Accepted
 - Decision:
-  - tile-prune のコア実装は Rust を採用する（CLI と SDK は同一コアを共有）。
+  - vt-optimizer-rs のコア実装は Rust を採用する（CLI と SDK は同一コアを共有）。
 - Rationale:
   - planet規模のスループット（CPU並列 + I/O）と単一バイナリ配布の両立を最優先する。
   - SQLite(WAL) を用いた「読取り並列＋単一writer集約」において、低オーバーヘッドなスレッド並列・ストリーミング実装が必要。WAL は reader/writer の同時進行が可能である。

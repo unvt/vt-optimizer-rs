@@ -1,5 +1,5 @@
 [package]
-name = "tile-prune"
+name = "vt-optimizer-rs"
 version = "0.0.1"
 edition = "2021"
 
@@ -30,5 +30,5 @@ name = "tile_prune"
 path = "src/lib.rs"
 
 [[bin]]
-name = "tile-prune"
+name = "vt-optimizer"
 path = "src/main.rs"

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**tile-prune** is a Rust CLI tool and SDK for inspecting, optimizing, and pruning Mapbox Vector Tiles (MVT) stored in MBTiles or PMTiles formats. It targets planet-scale tilesets (e.g., 92GB+ files) with streaming processing, parallel reads, and single-writer architecture.
+**vt-optimizer-rs** is a Rust CLI tool and SDK for inspecting, optimizing, and pruning Mapbox Vector Tiles (MVT) stored in MBTiles or PMTiles formats. It targets planet-scale tilesets (e.g., 92GB+ files) with streaming processing, parallel reads, and single-writer architecture.
 
 Key capabilities:
 - **inspect**: Analyze tile statistics, size distributions, and layer metadata

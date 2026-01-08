@@ -3,10 +3,46 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
-#[command(name = "tile-prune", version, about = "MBTiles/PMTiles inspection and pruning CLI")]
+#[command(
+    name = "vt-optimizer",
+    version,
+    about = "MBTiles/PMTiles inspection and pruning CLI"
+)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
+
+    /// vt-optimizer compatible: input MBTiles path
+    #[arg(short = 'm', long = "mbtiles")]
+    pub mbtiles: Option<PathBuf>,
+
+    /// vt-optimizer compatible: style JSON path
+    #[arg(short = 's', long = "style")]
+    pub style: Option<PathBuf>,
+
+    /// vt-optimizer compatible: output MBTiles path
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<PathBuf>,
+
+    /// vt-optimizer compatible: tile x
+    #[arg(short = 'x')]
+    pub x: Option<u32>,
+
+    /// vt-optimizer compatible: tile y
+    #[arg(short = 'y')]
+    pub y: Option<u32>,
+
+    /// vt-optimizer compatible: tile z
+    #[arg(short = 'z')]
+    pub z: Option<u8>,
+
+    /// vt-optimizer compatible: target layer (simplify)
+    #[arg(short = 'l')]
+    pub layer: Vec<String>,
+
+    /// vt-optimizer compatible: tolerance (simplify)
+    #[arg(short = 't')]
+    pub tolerance: Option<f64>,
 
     /// Log level (error|warn|info|debug|trace)
     #[arg(long, default_value = "info")]

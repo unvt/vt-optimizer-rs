@@ -930,30 +930,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tile-prune"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "brotli",
- "clap",
- "flate2",
- "geo-types",
- "hilbert_2d",
- "indicatif",
- "mvt",
- "mvt-reader",
- "nu-ansi-term",
- "protobuf",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tracing",
- "tracing-subscriber",
- "varint-rs",
-]
-
-[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1055,6 +1031,30 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vt-optimizer-rs"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "brotli",
+ "clap",
+ "flate2",
+ "geo-types",
+ "hilbert_2d",
+ "indicatif",
+ "mvt",
+ "mvt-reader",
+ "nu-ansi-term",
+ "protobuf",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "varint-rs",
+]
 
 [[package]]
 name = "wasip2"

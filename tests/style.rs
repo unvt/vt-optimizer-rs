@@ -1,6 +1,6 @@
 use std::fs;
 
-use tile_prune::style::read_style;
+use vt_optimizer::style::read_style;
 
 #[test]
 fn style_visibility_checks_zoom_and_paint() {
@@ -80,11 +80,11 @@ fn style_filter_supports_zoom_reference() {
     let mut unknown = 0usize;
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
     assert_eq!(
         style.should_keep_feature("roads", 2, &feature, &mut unknown),
-        tile_prune::style::FilterResult::False
+        vt_optimizer::style::FilterResult::False
     );
 }
 
@@ -149,15 +149,15 @@ fn style_filter_supports_get_and_in_expressions() {
     let mut unknown = 0usize;
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_primary, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_secondary, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_other, &mut unknown),
-        tile_prune::style::FilterResult::False
+        vt_optimizer::style::FilterResult::False
     );
 }
 
@@ -216,15 +216,15 @@ fn style_filter_supports_match_case_coalesce() {
     let mut unknown = 0usize;
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_primary, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_secondary, &mut unknown),
-        tile_prune::style::FilterResult::False
+        vt_optimizer::style::FilterResult::False
     );
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_missing, &mut unknown),
-        tile_prune::style::FilterResult::False
+        vt_optimizer::style::FilterResult::False
     );
 }
 
@@ -289,15 +289,15 @@ fn style_filter_combines_layers_with_or() {
     let mut unknown = 0usize;
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_primary, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_secondary, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_other, &mut unknown),
-        tile_prune::style::FilterResult::False
+        vt_optimizer::style::FilterResult::False
     );
 }
 
@@ -344,11 +344,11 @@ fn style_filter_uses_only_visible_layers() {
     let mut unknown = 0usize;
     assert_eq!(
         style.should_keep_feature("roads", 5, &feature_primary, &mut unknown),
-        tile_prune::style::FilterResult::False
+        vt_optimizer::style::FilterResult::False
     );
     assert_eq!(
         style.should_keep_feature("roads", 10, &feature_primary, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
 }
 
@@ -398,10 +398,10 @@ fn style_filter_supports_legacy_not_syntax() {
     let mut unknown = 0usize;
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_secondary, &mut unknown),
-        tile_prune::style::FilterResult::False
+        vt_optimizer::style::FilterResult::False
     );
     assert_eq!(
         style.should_keep_feature("roads", 3, &feature_other, &mut unknown),
-        tile_prune::style::FilterResult::True
+        vt_optimizer::style::FilterResult::True
     );
 }

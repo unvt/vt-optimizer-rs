@@ -1,7 +1,7 @@
 use clap::{CommandFactory, Parser};
 
-use tile_prune::cli::{Cli, Command, StyleMode};
-use tile_prune::cli::ReportFormat;
+use vt_optimizer::cli::{Cli, Command, StyleMode};
+use vt_optimizer::cli::ReportFormat;
 
 #[test]
 fn parse_optimize_minimal() {
@@ -154,7 +154,7 @@ fn parse_inspect_options() {
             assert!(args.fast);
             assert!(args.list_tiles);
             assert_eq!(args.limit, 20);
-            assert_eq!(args.sort, tile_prune::cli::TileSortArg::Zxy);
+            assert_eq!(args.sort, vt_optimizer::cli::TileSortArg::Zxy);
             assert!(args.ndjson_lite);
             assert!(args.ndjson_compact);
         }

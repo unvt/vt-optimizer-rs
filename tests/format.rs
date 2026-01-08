@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use tile_prune::format::{
+use vt_optimizer::format::{
     decide_formats, default_output_path_pruned, plan_copy, plan_optimize, resolve_output_path,
     TileFormat,
 };
-use tile_prune::format::validate_output_format_matches_path;
+use vt_optimizer::format::validate_output_format_matches_path;
 
 #[test]
 fn decide_formats_infer_from_extensions() {

@@ -26,7 +26,7 @@ geo-types = "0.7"
 [dev-dependencies]
 
 [lib]
-name = "tile_prune"
+name = "vt_optimizer"
 path = "src/lib.rs"
 
 [[bin]]

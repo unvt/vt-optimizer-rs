@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use tile_prune::mbtiles::{
+use vt_optimizer::mbtiles::{
     copy_mbtiles, inspect_mbtiles, inspect_mbtiles_with_options, MbtilesStats, MbtilesZoomStats,
     InspectOptions, SampleSpec, parse_sample_spec,
 };

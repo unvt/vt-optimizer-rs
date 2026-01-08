@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use tile_prune::mbtiles::{
+use vt_optimizer::mbtiles::{
     HistogramBucket, MbtilesReport, MbtilesStats, MbtilesZoomStats, TileSummary, TopTile,
     ZoomHistogram,
 };
-use tile_prune::output::{ndjson_lines, resolve_output_format, NdjsonOptions};
+use vt_optimizer::output::{ndjson_lines, resolve_output_format, NdjsonOptions};
 
 #[test]
 fn ndjson_splits_histograms_and_top_tile_summaries() {
@@ -364,8 +364,8 @@ fn ndjson_compact_omits_summary_even_when_requested() {
 
 #[test]
 fn ndjson_compact_forces_output_format() {
-    let output = resolve_output_format(tile_prune::cli::ReportFormat::Text, true);
-    assert_eq!(output, tile_prune::cli::ReportFormat::Ndjson);
-    let output = resolve_output_format(tile_prune::cli::ReportFormat::Json, false);
-    assert_eq!(output, tile_prune::cli::ReportFormat::Json);
+    let output = resolve_output_format(vt_optimizer::cli::ReportFormat::Text, true);
+    assert_eq!(output, vt_optimizer::cli::ReportFormat::Ndjson);
+    let output = resolve_output_format(vt_optimizer::cli::ReportFormat::Json, false);
+    assert_eq!(output, vt_optimizer::cli::ReportFormat::Json);
 }

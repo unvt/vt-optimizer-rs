@@ -4,7 +4,7 @@ use std::io::Write;
 use flate2::{Compression, write::GzEncoder};
 use mvt::{GeomEncoder, GeomType, Tile};
 
-use tile_prune::mbtiles::{inspect_mbtiles_with_options, InspectOptions, TileCoord};
+use vt_optimizer::mbtiles::{inspect_mbtiles_with_options, InspectOptions, TileCoord};
 
 fn create_vector_tile() -> Vec<u8> {
     let mut tile = Tile::new(4096);

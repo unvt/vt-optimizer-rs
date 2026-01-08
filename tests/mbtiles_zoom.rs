@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use tile_prune::mbtiles::{inspect_mbtiles_with_options, InspectOptions, MbtilesStats};
+use vt_optimizer::mbtiles::{inspect_mbtiles_with_options, InspectOptions, MbtilesStats};
 
 fn create_zoom_sample_mbtiles(path: &Path) {
     let conn = rusqlite::Connection::open(path).expect("open");
@@ -94,7 +94,7 @@ fn inspect_zoom_sampling_uses_zoom_tile_count() {
     create_zoom_sample_mbtiles(&path);
 
     let options = InspectOptions {
-        sample: Some(tile_prune::mbtiles::SampleSpec::Count(1)),
+        sample: Some(vt_optimizer::mbtiles::SampleSpec::Count(1)),
         topn: 0,
         histogram_buckets: 0,
         no_progress: true,

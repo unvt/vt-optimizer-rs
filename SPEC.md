@@ -559,12 +559,28 @@ v0.0.4 では以下を **含めない**。
 vt-optimizer <command> [options] <input> [<output>]
 ```
 
+互換 CLI（legacy）として、subcommand を省略した実行も許可する。
+
+```
+vt-optimizer -m <mbtiles> [-s <style.json>] [-o <output>] [-z <z> -x <x> -y <y> [-l <layer>] [-t <tolerance>]]
+```
+
 `<command>`:
 
 * `inspect` : 統計・分布・サンプリング
 * `prune`   : style ベース最適化（レイヤー削除 + feature 削除）
 * `simplify`: ジオメトリ簡略化
 * `copy`    : 変換のみ（MBTiles⇄PMTiles、再圧縮/正規化含む、任意）
+
+互換 CLI の挙動:
+
+* `-m` のみ: `inspect` と同等（text）
+* `-m -s` / `-m -s -o`: `prune` 相当（style-mode=vt-compat）
+* `-m -z -x -y` (+ `-l` / `-t`): `simplify` 相当として受理
+
+注記:
+
+* `-z/-x/-y/-l/-t` の simplify 相当は CLI で受理し、実処理への接続は段階的に実装する（仕様としては保持）。
 
 ### 4.2 入出力フォーマット推定（ffmpeg 的挙動）
 

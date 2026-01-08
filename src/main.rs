@@ -1,22 +1,22 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use tile_prune::cli::{Cli, Command, ReportFormat, TileSortArg};
-use tile_prune::format::{plan_copy, plan_optimize, resolve_output_path};
-use tile_prune::mbtiles::{
+use vt_optimizer::cli::{Cli, Command, ReportFormat, TileSortArg};
+use vt_optimizer::format::{plan_copy, plan_optimize, resolve_output_path};
+use vt_optimizer::mbtiles::{
     copy_mbtiles, inspect_mbtiles_with_options, parse_sample_spec, parse_tile_spec,
     prune_mbtiles_layer_only, InspectOptions, PruneStats, TileListOptions, TileSort,
 };
-use tile_prune::output::{
+use vt_optimizer::output::{
     format_bytes, format_histogram_table, format_histograms_by_zoom_section,
     format_metadata_section, ndjson_lines, pad_left, pad_right, resolve_output_format,
 };
 use nu_ansi_term::Color;
-use tile_prune::pmtiles::{
+use vt_optimizer::pmtiles::{
     inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles,
     prune_pmtiles_layer_only,
 };
-use tile_prune::style::read_style;
+use vt_optimizer::style::read_style;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -42,16 +42,16 @@ fn main() -> Result<()> {
             let _output_path =
                 resolve_output_path(&args.input, args.output.as_deref(), decision.output);
             match (decision.input, decision.output) {
-                (tile_prune::format::TileFormat::Mbtiles, tile_prune::format::TileFormat::Mbtiles) => {
+                (vt_optimizer::format::TileFormat::Mbtiles, vt_optimizer::format::TileFormat::Mbtiles) => {
                     copy_mbtiles(&args.input, &_output_path)?;
                 }
-                (tile_prune::format::TileFormat::Mbtiles, tile_prune::format::TileFormat::Pmtiles) => {
+                (vt_optimizer::format::TileFormat::Mbtiles, vt_optimizer::format::TileFormat::Pmtiles) => {
                     mbtiles_to_pmtiles(&args.input, &_output_path)?;
                 }
-                (tile_prune::format::TileFormat::Pmtiles, tile_prune::format::TileFormat::Mbtiles) => {
+                (vt_optimizer::format::TileFormat::Pmtiles, vt_optimizer::format::TileFormat::Mbtiles) => {
                     pmtiles_to_mbtiles(&args.input, &_output_path)?;
                 }
-                (tile_prune::format::TileFormat::Pmtiles, tile_prune::format::TileFormat::Pmtiles) => {
+                (vt_optimizer::format::TileFormat::Pmtiles, vt_optimizer::format::TileFormat::Pmtiles) => {
                     anyhow::bail!("v0.0.3 does not support PMTiles to PMTiles copy");
                 }
             }
@@ -65,13 +65,13 @@ fn main() -> Result<()> {
                 anyhow::bail!("no subcommand or --mbtiles provided");
             };
             if cli.style.is_some() {
-                let args = tile_prune::cli::OptimizeArgs {
+                let args = vt_optimizer::cli::OptimizeArgs {
                     input: input.clone(),
                     output: cli.output.clone(),
                     input_format: None,
                     output_format: None,
                     style: cli.style.clone(),
-                    style_mode: tile_prune::cli::StyleMode::VtCompat,
+                    style_mode: vt_optimizer::cli::StyleMode::VtCompat,
                     max_tile_bytes: 1_280_000,
                     threads: None,
                     io_batch: 1_000,
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
             }
             if let (Some(x), Some(y), Some(z)) = (cli.x, cli.y, cli.z) {
                 if !cli.layer.is_empty() || cli.tolerance.is_some() {
-                    let args = tile_prune::cli::SimplifyArgs {
+                    let args = vt_optimizer::cli::SimplifyArgs {
                         input: input.clone(),
                         output: cli.output.clone(),
                         z,
@@ -101,13 +101,13 @@ fn main() -> Result<()> {
                     );
                     return Ok(());
                 }
-                let args = tile_prune::cli::InspectArgs {
+                let args = vt_optimizer::cli::InspectArgs {
                     input: input.clone(),
                     max_tile_bytes: 1_280_000,
                     histogram_buckets: 10,
                     topn: None,
                     sample: None,
-                    output: tile_prune::cli::ReportFormat::Text,
+                    output: vt_optimizer::cli::ReportFormat::Text,
                     no_progress: false,
                     zoom: None,
                     bucket: None,
@@ -118,20 +118,20 @@ fn main() -> Result<()> {
                     fast: false,
                     list_tiles: false,
                     limit: 100,
-                    sort: tile_prune::cli::TileSortArg::Size,
+                    sort: vt_optimizer::cli::TileSortArg::Size,
                     ndjson_lite: false,
                     ndjson_compact: false,
                 };
                 run_inspect(args)?;
                 return Ok(());
             }
-            let args = tile_prune::cli::InspectArgs {
+            let args = vt_optimizer::cli::InspectArgs {
                 input: input.clone(),
                 max_tile_bytes: 1_280_000,
                 histogram_buckets: 10,
                 topn: None,
                 sample: None,
-                output: tile_prune::cli::ReportFormat::Text,
+                output: vt_optimizer::cli::ReportFormat::Text,
                 no_progress: false,
                 zoom: None,
                 bucket: None,
@@ -142,7 +142,7 @@ fn main() -> Result<()> {
                 fast: false,
                 list_tiles: false,
                 limit: 100,
-                sort: tile_prune::cli::TileSortArg::Size,
+                sort: vt_optimizer::cli::TileSortArg::Size,
                 ndjson_lite: false,
                 ndjson_compact: false,
             };
@@ -160,7 +160,7 @@ fn init_tracing(level: &str) {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-fn run_inspect(args: tile_prune::cli::InspectArgs) -> Result<()> {
+fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
     let output = resolve_output_format(args.output, args.ndjson_compact);
     if args.ndjson_lite && output != ReportFormat::Ndjson {
         anyhow::bail!("--ndjson-lite requires --output ndjson");
@@ -194,7 +194,7 @@ fn run_inspect(args: tile_prune::cli::InspectArgs) -> Result<()> {
         args.topn
     };
     let (sample, topn, histogram_buckets) = if args.fast {
-        (Some(tile_prune::mbtiles::SampleSpec::Ratio(0.1)), Some(5), 10)
+        (Some(vt_optimizer::mbtiles::SampleSpec::Ratio(0.1)), Some(5), 10)
     } else {
         (sample, topn, args.histogram_buckets as usize)
     };
@@ -223,13 +223,13 @@ fn run_inspect(args: tile_prune::cli::InspectArgs) -> Result<()> {
             None
         },
     };
-    let input_format = tile_prune::format::TileFormat::from_extension(&args.input)
+    let input_format = vt_optimizer::format::TileFormat::from_extension(&args.input)
         .ok_or_else(|| anyhow::anyhow!("cannot infer input format from path"))?;
     let report = match input_format {
-        tile_prune::format::TileFormat::Mbtiles => {
+        vt_optimizer::format::TileFormat::Mbtiles => {
             inspect_mbtiles_with_options(&args.input, options)?
         }
-        tile_prune::format::TileFormat::Pmtiles => {
+        vt_optimizer::format::TileFormat::Pmtiles => {
             inspect_pmtiles_with_options(&args.input, &options)?
         }
     };
@@ -239,7 +239,7 @@ fn run_inspect(args: tile_prune::cli::InspectArgs) -> Result<()> {
             println!("{}", json);
         }
         ReportFormat::Ndjson => {
-            let options = tile_prune::output::NdjsonOptions {
+            let options = vt_optimizer::output::NdjsonOptions {
                 include_summary: !args.ndjson_lite && !args.ndjson_compact,
                 compact: args.ndjson_compact,
             };
@@ -447,7 +447,7 @@ fn run_inspect(args: tile_prune::cli::InspectArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_optimize(args: tile_prune::cli::OptimizeArgs) -> Result<()> {
+fn run_optimize(args: vt_optimizer::cli::OptimizeArgs) -> Result<()> {
     let decision = plan_optimize(
         &args.input,
         args.output.as_deref(),
@@ -459,9 +459,9 @@ fn run_optimize(args: tile_prune::cli::OptimizeArgs) -> Result<()> {
         .style
         .as_ref()
         .context("--style is required for optimize")?;
-    if args.style_mode != tile_prune::cli::StyleMode::Layer
-        && args.style_mode != tile_prune::cli::StyleMode::LayerFilter
-        && args.style_mode != tile_prune::cli::StyleMode::VtCompat
+    if args.style_mode != vt_optimizer::cli::StyleMode::Layer
+        && args.style_mode != vt_optimizer::cli::StyleMode::LayerFilter
+        && args.style_mode != vt_optimizer::cli::StyleMode::VtCompat
     {
         anyhow::bail!(
             "v0.0.55 only supports --style-mode layer, layer+filter, or vt-compat"
@@ -471,16 +471,16 @@ fn run_optimize(args: tile_prune::cli::OptimizeArgs) -> Result<()> {
     println!("- Parsing style file");
     let style = read_style(style_path)?;
     match (decision.input, decision.output) {
-        (tile_prune::format::TileFormat::Mbtiles, tile_prune::format::TileFormat::Mbtiles) => {
-            let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
+        (vt_optimizer::format::TileFormat::Mbtiles, vt_optimizer::format::TileFormat::Mbtiles) => {
+            let apply_filters = args.style_mode == vt_optimizer::cli::StyleMode::LayerFilter;
             println!("- Processing tiles");
             let stats =
                 prune_mbtiles_layer_only(&args.input, &output_path, &style, apply_filters)?;
             println!("- Writing output file to {}", output_path.display());
             print_prune_summary(&stats);
         }
-        (tile_prune::format::TileFormat::Pmtiles, tile_prune::format::TileFormat::Pmtiles) => {
-            let apply_filters = args.style_mode == tile_prune::cli::StyleMode::LayerFilter;
+        (vt_optimizer::format::TileFormat::Pmtiles, vt_optimizer::format::TileFormat::Pmtiles) => {
+            let apply_filters = args.style_mode == vt_optimizer::cli::StyleMode::LayerFilter;
             println!("- Processing tiles");
             let stats =
                 prune_pmtiles_layer_only(&args.input, &output_path, &style, apply_filters)?;

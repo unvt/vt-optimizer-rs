@@ -7,12 +7,12 @@ use brotli::CompressorWriter;
 use flate2::read::GzDecoder;
 use mvt::{GeomEncoder, GeomType, Tile};
 use mvt_reader::Reader;
-use tile_prune::mbtiles::{inspect_mbtiles, InspectOptions};
-use tile_prune::pmtiles::{
+use vt_optimizer::mbtiles::{inspect_mbtiles, InspectOptions};
+use vt_optimizer::pmtiles::{
     inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles,
     prune_pmtiles_layer_only,
 };
-use tile_prune::style::read_style;
+use vt_optimizer::style::read_style;
 
 fn create_sample_mbtiles(path: &Path) {
     let conn = rusqlite::Connection::open(path).expect("open");

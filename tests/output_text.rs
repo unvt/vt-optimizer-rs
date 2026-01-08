@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use tile_prune::mbtiles::{HistogramBucket, ZoomHistogram};
-use tile_prune::output::{
+use vt_optimizer::mbtiles::{HistogramBucket, ZoomHistogram};
+use vt_optimizer::output::{
     format_histogram_table, format_histograms_by_zoom_section, format_metadata_section,
 };
 

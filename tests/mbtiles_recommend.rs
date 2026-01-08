@@ -2,7 +2,7 @@ use std::path::Path;
 
 use mvt::{GeomEncoder, GeomType, Tile};
 
-use tile_prune::mbtiles::{inspect_mbtiles_with_options, InspectOptions};
+use vt_optimizer::mbtiles::{inspect_mbtiles_with_options, InspectOptions};
 
 fn create_tile_with_points(count: usize) -> Vec<u8> {
     let mut tile = Tile::new(4096);

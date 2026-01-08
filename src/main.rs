@@ -45,7 +45,7 @@ fn main() -> Result<()> {
                 x: args.x,
                 y: args.y,
             };
-            simplify_mbtiles_tile(&args.input, &output, coord, &args.layer)?;
+            simplify_mbtiles_tile(&args.input, &output, coord, &args.layer, args.tolerance)?;
             println!(
                 "simplify: input={} output={} z={} x={} y={}",
                 args.input.display(),
@@ -130,7 +130,7 @@ fn main() -> Result<()> {
                         x: args.x,
                         y: args.y,
                     };
-                    simplify_mbtiles_tile(&args.input, &output, coord, &args.layer)?;
+                    simplify_mbtiles_tile(&args.input, &output, coord, &args.layer, args.tolerance)?;
                     println!(
                         "simplify: input={} output={} z={} x={} y={}",
                         args.input.display(),

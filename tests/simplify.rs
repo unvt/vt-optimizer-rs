@@ -55,6 +55,52 @@ fn create_layer_mbtiles(path: &Path) {
     .expect("tile insert");
 }
 
+fn create_line_tile() -> Vec<u8> {
+    let mut tile = Tile::new(4096);
+    let layer = tile.create_layer("roads");
+    let geom = GeomEncoder::new(GeomType::Linestring)
+        .point(0.0, 0.0)
+        .expect("point0")
+        .point(1.0, 0.1)
+        .expect("point1")
+        .point(2.0, 0.0)
+        .expect("point2")
+        .point(3.0, 0.1)
+        .expect("point3")
+        .point(4.0, 0.0)
+        .expect("point4")
+        .encode()
+        .expect("encode");
+    let mut feature = layer.into_feature(geom);
+    feature.add_tag_string("class", "primary");
+    let layer = feature.into_layer();
+    tile.add_layer(layer).expect("add roads");
+    tile.to_bytes().expect("tile bytes")
+}
+
+fn create_line_mbtiles(path: &Path) {
+    let conn = rusqlite::Connection::open(path).expect("open");
+    conn.execute_batch(
+        "
+        CREATE TABLE metadata (name TEXT, value TEXT);
+        CREATE TABLE tiles (
+            zoom_level INTEGER,
+            tile_column INTEGER,
+            tile_row INTEGER,
+            tile_data BLOB
+        );
+        ",
+    )
+    .expect("schema");
+
+    let data = create_line_tile();
+    conn.execute(
+        "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (0, 0, 0, ?1)",
+        (data,),
+    )
+    .expect("tile insert");
+}
+
 #[test]
 fn simplify_mbtiles_tile_filters_layers() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -63,7 +109,8 @@ fn simplify_mbtiles_tile_filters_layers() {
     create_layer_mbtiles(&input);
 
     let coord = TileCoord { zoom: 0, x: 0, y: 0 };
-    simplify_mbtiles_tile(&input, &output, coord, &["roads".to_string()]).expect("simplify");
+    simplify_mbtiles_tile(&input, &output, coord, &["roads".to_string()], None)
+        .expect("simplify");
 
     let conn = rusqlite::Connection::open(&output).expect("open output");
     let data: Vec<u8> = conn
@@ -87,7 +134,7 @@ fn simplify_mbtiles_tile_keeps_all_layers_when_empty() {
     create_layer_mbtiles(&input);
 
     let coord = TileCoord { zoom: 0, x: 0, y: 0 };
-    simplify_mbtiles_tile(&input, &output, coord, &[]).expect("simplify");
+    simplify_mbtiles_tile(&input, &output, coord, &[], None).expect("simplify");
 
     let conn = rusqlite::Connection::open(&output).expect("open output");
     let data: Vec<u8> = conn
@@ -103,4 +150,32 @@ fn simplify_mbtiles_tile_keeps_all_layers_when_empty() {
     let names: Vec<_> = layers.iter().map(|layer| layer.name.as_str()).collect();
     assert!(names.contains(&"roads"));
     assert!(names.contains(&"buildings"));
+}
+
+#[test]
+fn simplify_mbtiles_tile_applies_tolerance() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("input.mbtiles");
+    let output = dir.path().join("output.mbtiles");
+    create_line_mbtiles(&input);
+
+    let coord = TileCoord { zoom: 0, x: 0, y: 0 };
+    simplify_mbtiles_tile(&input, &output, coord, &[], Some(0.5)).expect("simplify");
+
+    let conn = rusqlite::Connection::open(&output).expect("open output");
+    let data: Vec<u8> = conn
+        .query_row(
+            "SELECT tile_data FROM tiles WHERE zoom_level = 0 AND tile_column = 0 AND tile_row = 0",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read tile");
+    let reader = Reader::new(data).expect("decode");
+    let features = reader.get_features(0).expect("features");
+    let geom = features[0].get_geometry().clone();
+    if let geo_types::Geometry::LineString(line) = geom {
+        assert!(line.0.len() <= 3, "line was not simplified");
+    } else {
+        panic!("expected linestring geometry");
+    }
 }

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use geo_types::{Geometry, Line, LineString, MultiLineString, MultiPoint, MultiPolygon, Polygon};
+use geo_types::{Coord, Geometry, Line, LineString, MultiLineString, MultiPoint, MultiPolygon, Polygon};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use mvt::{GeomData, GeomEncoder, GeomType, Tile};
 use mvt_reader::Reader;
@@ -539,7 +539,11 @@ pub(crate) fn prune_tile_layers(
         .map_err(|err| anyhow::anyhow!("encode vector tile: {err}"))
 }
 
-fn filter_tile_layers(payload: &[u8], keep_layers: &HashSet<String>) -> Result<Vec<u8>> {
+fn filter_tile_layers(
+    payload: &[u8],
+    keep_layers: &HashSet<String>,
+    tolerance: Option<f64>,
+) -> Result<Vec<u8>> {
     let reader = Reader::new(payload.to_vec())
         .map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
     let layers = reader
@@ -564,7 +568,12 @@ fn filter_tile_layers(payload: &[u8], keep_layers: &HashSet<String>) -> Result<V
             .get_features(layer.layer_index)
             .map_err(|err| anyhow::anyhow!("read layer features: {err}"))?;
         for feature in features {
-            let geom_data = encode_geometry(feature.get_geometry())?;
+            let geometry = feature.get_geometry();
+            let geometry = match tolerance {
+                Some(value) if value > 0.0 => simplify_geometry(geometry, value as f32),
+                _ => geometry.clone(),
+            };
+            let geom_data = encode_geometry(&geometry)?;
             let mut feature_builder = layer_builder.into_feature(geom_data);
             if let Some(id) = feature.id {
                 feature_builder.set_id(id);
@@ -619,6 +628,170 @@ fn fetch_tile_data(conn: &Connection, coord: TileCoord) -> Result<Option<Vec<u8>
     } else {
         Ok(None)
     }
+}
+
+fn simplify_geometry(geometry: &Geometry<f32>, tolerance: f32) -> Geometry<f32> {
+    if tolerance <= 0.0 {
+        return geometry.clone();
+    }
+
+    match geometry {
+        Geometry::LineString(line) => {
+            let simplified = simplify_line(&line.0, tolerance);
+            Geometry::LineString(LineString::from(simplified))
+        }
+        Geometry::MultiLineString(lines) => {
+            let simplified = lines
+                .0
+                .iter()
+                .map(|line| LineString::from(simplify_line(&line.0, tolerance)))
+                .collect::<Vec<_>>();
+            Geometry::MultiLineString(MultiLineString(simplified))
+        }
+        Geometry::Polygon(polygon) => {
+            let exterior = simplify_ring(&polygon.exterior().0, tolerance);
+            let interiors = polygon
+                .interiors()
+                .iter()
+                .map(|ring| simplify_ring(&ring.0, tolerance))
+                .map(LineString::from)
+                .collect::<Vec<_>>();
+            Geometry::Polygon(Polygon::new(LineString::from(exterior), interiors))
+        }
+        Geometry::MultiPolygon(polygons) => {
+            let simplified = polygons
+                .0
+                .iter()
+                .map(|polygon| {
+                    let exterior = simplify_ring(&polygon.exterior().0, tolerance);
+                    let interiors = polygon
+                        .interiors()
+                        .iter()
+                        .map(|ring| simplify_ring(&ring.0, tolerance))
+                        .map(LineString::from)
+                        .collect::<Vec<_>>();
+                    Polygon::new(LineString::from(exterior), interiors)
+                })
+                .collect::<Vec<_>>();
+            Geometry::MultiPolygon(MultiPolygon(simplified))
+        }
+        _ => geometry.clone(),
+    }
+}
+
+fn simplify_ring(points: &[Coord<f32>], tolerance: f32) -> Vec<Coord<f32>> {
+    if points.len() <= 4 {
+        return points.to_vec();
+    }
+
+    let closed = points.first() == points.last();
+    let core = if closed {
+        points[..points.len() - 1].to_vec()
+    } else {
+        points.to_vec()
+    };
+    let simplified = simplify_line(&core, tolerance);
+    if simplified.len() < 3 {
+        return points.to_vec();
+    }
+    let mut out = simplified;
+    if closed {
+        out.push(out[0]);
+    }
+    out
+}
+
+fn simplify_line(points: &[Coord<f32>], tolerance: f32) -> Vec<Coord<f32>> {
+    if points.len() <= 2 {
+        return points.to_vec();
+    }
+    let sq_tolerance = tolerance * tolerance;
+    let mut reduced = simplify_radial_dist(points, sq_tolerance);
+    if reduced.len() <= 2 {
+        return reduced;
+    }
+    reduced = simplify_douglas_peucker(&reduced, sq_tolerance);
+    reduced
+}
+
+fn simplify_radial_dist(points: &[Coord<f32>], sq_tolerance: f32) -> Vec<Coord<f32>> {
+    let mut prev = points[0];
+    let mut out = vec![prev];
+    for point in points.iter().skip(1) {
+        if get_sq_dist(*point, prev) > sq_tolerance {
+            out.push(*point);
+            prev = *point;
+        }
+    }
+    if prev != *points.last().unwrap() {
+        out.push(*points.last().unwrap());
+    }
+    out
+}
+
+fn simplify_douglas_peucker(points: &[Coord<f32>], sq_tolerance: f32) -> Vec<Coord<f32>> {
+    let last = points.len() - 1;
+    let mut simplified = vec![points[0]];
+    simplify_dp_step(points, 0, last, sq_tolerance, &mut simplified);
+    simplified.push(points[last]);
+    simplified
+}
+
+fn simplify_dp_step(
+    points: &[Coord<f32>],
+    first: usize,
+    last: usize,
+    sq_tolerance: f32,
+    simplified: &mut Vec<Coord<f32>>,
+) {
+    let mut max_sq_dist = sq_tolerance;
+    let mut index = None;
+
+    for i in (first + 1)..last {
+        let sq_dist = get_sq_seg_dist(points[i], points[first], points[last]);
+        if sq_dist > max_sq_dist {
+            index = Some(i);
+            max_sq_dist = sq_dist;
+        }
+    }
+
+    if let Some(idx) = index {
+        if idx - first > 1 {
+            simplify_dp_step(points, first, idx, sq_tolerance, simplified);
+        }
+        simplified.push(points[idx]);
+        if last - idx > 1 {
+            simplify_dp_step(points, idx, last, sq_tolerance, simplified);
+        }
+    }
+}
+
+fn get_sq_dist(p1: Coord<f32>, p2: Coord<f32>) -> f32 {
+    let dx = p1.x - p2.x;
+    let dy = p1.y - p2.y;
+    dx * dx + dy * dy
+}
+
+fn get_sq_seg_dist(p: Coord<f32>, p1: Coord<f32>, p2: Coord<f32>) -> f32 {
+    let mut x = p1.x;
+    let mut y = p1.y;
+    let dx = p2.x - x;
+    let dy = p2.y - y;
+
+    if dx != 0.0 || dy != 0.0 {
+        let t = ((p.x - x) * dx + (p.y - y) * dy) / (dx * dx + dy * dy);
+        if t > 1.0 {
+            x = p2.x;
+            y = p2.y;
+        } else if t > 0.0 {
+            x += dx * t;
+            y += dy * t;
+        }
+    }
+
+    let dx = p.x - x;
+    let dy = p.y - y;
+    dx * dx + dy * dy
 }
 
 struct LayerAccum {
@@ -2084,6 +2257,7 @@ pub fn simplify_mbtiles_tile(
     output: &Path,
     coord: TileCoord,
     layers: &[String],
+    tolerance: Option<f64>,
 ) -> Result<()> {
     ensure_mbtiles_path(input)?;
     ensure_mbtiles_path(output)?;
@@ -2118,7 +2292,7 @@ pub fn simplify_mbtiles_tile(
     let payload = decode_tile_payload(&data)?;
 
     let keep_layers: HashSet<String> = layers.iter().cloned().collect();
-    let filtered = filter_tile_layers(&payload, &keep_layers)?;
+    let filtered = filter_tile_layers(&payload, &keep_layers, tolerance)?;
     let encoded = encode_tile_payload(&filtered, is_gzip)?;
 
     match schema_mode {

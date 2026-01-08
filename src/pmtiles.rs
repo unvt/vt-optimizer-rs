@@ -15,8 +15,9 @@ use serde_json::Value;
 use varint_rs::{VarintReader, VarintWriter};
 
 use crate::mbtiles::{
-    count_vertices, encode_tile_payload, format_property_value, prune_tile_layers, HistogramBucket,
-    InspectOptions, MbtilesReport, MbtilesStats, MbtilesZoomStats, PruneStats, ZoomHistogram,
+    count_vertices, encode_tile_payload, format_property_value, prune_tile_layers,
+    simplify_tile_payload, HistogramBucket, InspectOptions, MbtilesReport, MbtilesStats,
+    MbtilesZoomStats, PruneStats, SimplifyStats, TileCoord, ZoomHistogram,
 };
 
 const HEADER_SIZE: usize = 127;
@@ -1257,6 +1258,116 @@ pub fn prune_pmtiles_layer_only(
     file.seek(SeekFrom::Start(header.data_offset))
         .context("seek data")?;
     file.write_all(&data_section).context("write data")?;
+
+    Ok(stats)
+}
+
+pub fn simplify_pmtiles_tile(
+    input: &Path,
+    output: &Path,
+    coord: TileCoord,
+    layers: &[String],
+    tolerance: Option<f64>,
+) -> Result<SimplifyStats> {
+    ensure_pmtiles_path(input)?;
+    ensure_pmtiles_path(output)?;
+
+    let file = File::open(input)
+        .with_context(|| format!("failed to open input pmtiles: {}", input.display()))?;
+    let header = read_header(&file).context("read header")?;
+    let root_entries =
+        read_directory_section(&file, &header, header.root_offset, header.root_length)?;
+    let metadata = read_metadata_section(&file, &header)?;
+
+    let target_id = tile_id_from_xyz(coord.zoom, coord.x, coord.y);
+    let mut data: Option<Vec<u8>> = None;
+
+    let mut stack = vec![root_entries];
+    let mut file = file;
+    'search: while let Some(entries) = stack.pop() {
+        for entry in entries {
+            if entry.run_length == 0 {
+                if entry.length == 0 {
+                    continue;
+                }
+                let leaf_offset = header.leaf_offset + entry.offset;
+                let leaf_entries =
+                    read_directory_section(&file, &header, leaf_offset, entry.length as u64)?;
+                stack.push(leaf_entries);
+                continue;
+            }
+            let run = entry.run_length.max(1);
+            let end = entry.tile_id + run as u64;
+            if target_id < entry.tile_id || target_id >= end {
+                continue;
+            }
+            let data_offset = header.data_offset + entry.offset;
+            let mut buf = vec![0u8; entry.length as usize];
+            file.seek(SeekFrom::Start(data_offset))
+                .context("seek tile")?;
+            file.read_exact(&mut buf).context("read tile data")?;
+            data = Some(buf);
+            break 'search;
+        }
+    }
+
+    let Some(data) = data else {
+        anyhow::bail!("tile not found: z={} x={} y={}", coord.zoom, coord.x, coord.y);
+    };
+
+    let payload = decode_tile_payload_pmtiles(&data, header.tile_compression)?;
+    let keep_layers: HashSet<String> = layers.iter().cloned().collect();
+    let (filtered, stats) = simplify_tile_payload(&payload, &keep_layers, tolerance)?;
+    let tile_data = encode_tile_payload_pmtiles(&filtered, header.tile_compression)?;
+
+    let entry = Entry {
+        tile_id: target_id,
+        offset: 0,
+        length: tile_data.len() as u32,
+        run_length: 1,
+    };
+    let dir_bytes = encode_directory(&[entry])?;
+    let dir_section = encode_internal_bytes(&dir_bytes, header.internal_compression)?;
+    let metadata_bytes = if metadata.is_empty() {
+        Vec::new()
+    } else {
+        let mut map = serde_json::Map::new();
+        for (key, value) in metadata.into_iter() {
+            map.insert(key, Value::String(value));
+        }
+        let json = Value::Object(map).to_string();
+        encode_internal_bytes(json.as_bytes(), header.internal_compression)?
+    };
+    let header = build_header_with_metadata(
+        dir_section.len() as u64,
+        metadata_bytes.len() as u64,
+        tile_data.len() as u64,
+        1,
+        coord.zoom,
+        coord.zoom,
+        header.internal_compression,
+        header.tile_compression,
+        header.tile_type,
+    );
+
+    let file = File::create(output)
+        .with_context(|| format!("failed to create output pmtiles: {}", output.display()))?;
+    write_header(&file, &header)?;
+
+    let mut file = file;
+    file.seek(SeekFrom::Start(header.root_offset))
+        .context("seek root directory")?;
+    file.write_all(&dir_section).context("write root directory")?;
+
+    if !metadata_bytes.is_empty() {
+        file.seek(SeekFrom::Start(header.metadata_offset))
+            .context("seek metadata")?;
+        file.write_all(&metadata_bytes).context("write metadata")?;
+    }
+
+    file.seek(SeekFrom::Start(header.data_offset))
+        .context("seek data")?;
+    file.write_all(&tile_data).context("write data")?;
 
     Ok(stats)
 }

@@ -15,7 +15,7 @@ use vt_optimizer::output::{
 use nu_ansi_term::Color;
 use vt_optimizer::pmtiles::{
     inspect_pmtiles_with_options, mbtiles_to_pmtiles, pmtiles_to_mbtiles,
-    prune_pmtiles_layer_only,
+    prune_pmtiles_layer_only, simplify_pmtiles_tile,
 };
 use vt_optimizer::style::read_style;
 
@@ -33,26 +33,51 @@ fn main() -> Result<()> {
         Some(Command::Simplify(args)) => {
             let input_format = vt_optimizer::format::TileFormat::from_extension(&args.input)
                 .ok_or_else(|| anyhow::anyhow!("cannot infer input format from path"))?;
-            if input_format != vt_optimizer::format::TileFormat::Mbtiles {
-                anyhow::bail!("simplify currently supports only .mbtiles input");
-            }
-            let output = args
-                .output
-                .clone()
-                .unwrap_or_else(|| args.input.with_extension("simplified.mbtiles"));
             let coord = vt_optimizer::mbtiles::TileCoord {
                 zoom: args.z,
                 x: args.x,
                 y: args.y,
             };
-            simplify_mbtiles_tile(&args.input, &output, coord, &args.layer, args.tolerance)?;
+            let (output, stats) = match input_format {
+                vt_optimizer::format::TileFormat::Mbtiles => {
+                    let output = args
+                        .output
+                        .clone()
+                        .unwrap_or_else(|| args.input.with_extension("simplified.mbtiles"));
+                    let stats = simplify_mbtiles_tile(
+                        &args.input,
+                        &output,
+                        coord,
+                        &args.layer,
+                        args.tolerance,
+                    )?;
+                    (output, stats)
+                }
+                vt_optimizer::format::TileFormat::Pmtiles => {
+                    let output = args
+                        .output
+                        .clone()
+                        .unwrap_or_else(|| args.input.with_extension("simplified.pmtiles"));
+                    let stats = simplify_pmtiles_tile(
+                        &args.input,
+                        &output,
+                        coord,
+                        &args.layer,
+                        args.tolerance,
+                    )?;
+                    (output, stats)
+                }
+            };
             println!(
-                "simplify: input={} output={} z={} x={} y={}",
+                "simplify: input={} output={} z={} x={} y={} features={} vertices={}=>{}",
                 args.input.display(),
                 output.display(),
                 args.z,
                 args.x,
-                args.y
+                args.y,
+                stats.feature_count,
+                stats.vertices_before,
+                stats.vertices_after
             );
         }
         Some(Command::Copy(args)) => {
@@ -118,26 +143,51 @@ fn main() -> Result<()> {
                     let input_format =
                         vt_optimizer::format::TileFormat::from_extension(&args.input)
                             .ok_or_else(|| anyhow::anyhow!("cannot infer input format from path"))?;
-                    if input_format != vt_optimizer::format::TileFormat::Mbtiles {
-                        anyhow::bail!("simplify currently supports only .mbtiles input");
-                    }
-                    let output = args
-                        .output
-                        .clone()
-                        .unwrap_or_else(|| args.input.with_extension("simplified.mbtiles"));
                     let coord = vt_optimizer::mbtiles::TileCoord {
                         zoom: args.z,
                         x: args.x,
                         y: args.y,
                     };
-                    simplify_mbtiles_tile(&args.input, &output, coord, &args.layer, args.tolerance)?;
+                    let (output, stats) = match input_format {
+                        vt_optimizer::format::TileFormat::Mbtiles => {
+                            let output = args
+                                .output
+                                .clone()
+                                .unwrap_or_else(|| args.input.with_extension("simplified.mbtiles"));
+                            let stats = simplify_mbtiles_tile(
+                                &args.input,
+                                &output,
+                                coord,
+                                &args.layer,
+                                args.tolerance,
+                            )?;
+                            (output, stats)
+                        }
+                        vt_optimizer::format::TileFormat::Pmtiles => {
+                            let output = args
+                                .output
+                                .clone()
+                                .unwrap_or_else(|| args.input.with_extension("simplified.pmtiles"));
+                            let stats = simplify_pmtiles_tile(
+                                &args.input,
+                                &output,
+                                coord,
+                                &args.layer,
+                                args.tolerance,
+                            )?;
+                            (output, stats)
+                        }
+                    };
                     println!(
-                        "simplify: input={} output={} z={} x={} y={}",
+                        "simplify: input={} output={} z={} x={} y={} features={} vertices={}=>{}",
                         args.input.display(),
                         output.display(),
                         args.z,
                         args.x,
-                        args.y
+                        args.y,
+                        stats.feature_count,
+                        stats.vertices_before,
+                        stats.vertices_after
                     );
                     return Ok(());
                 }

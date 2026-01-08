@@ -51,6 +51,13 @@ pub struct MbtilesReport {
     pub top_tile_summaries: Vec<TileSummary>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimplifyStats {
+    pub feature_count: u64,
+    pub vertices_before: u64,
+    pub vertices_after: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HistogramBucket {
     pub min_bytes: u64,
@@ -539,11 +546,11 @@ pub(crate) fn prune_tile_layers(
         .map_err(|err| anyhow::anyhow!("encode vector tile: {err}"))
 }
 
-fn filter_tile_layers(
+pub(crate) fn simplify_tile_payload(
     payload: &[u8],
     keep_layers: &HashSet<String>,
     tolerance: Option<f64>,
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, SimplifyStats)> {
     let reader = Reader::new(payload.to_vec())
         .map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
     let layers = reader
@@ -559,6 +566,11 @@ fn filter_tile_layers(
     }
 
     let mut tile = Tile::new(extent);
+    let mut stats = SimplifyStats {
+        feature_count: 0,
+        vertices_before: 0,
+        vertices_after: 0,
+    };
     for layer in layers {
         if !keep_layers.is_empty() && !keep_layers.contains(&layer.name) {
             continue;
@@ -569,10 +581,13 @@ fn filter_tile_layers(
             .map_err(|err| anyhow::anyhow!("read layer features: {err}"))?;
         for feature in features {
             let geometry = feature.get_geometry();
+            stats.feature_count += 1;
+            stats.vertices_before += count_vertices(geometry) as u64;
             let geometry = match tolerance {
                 Some(value) if value > 0.0 => simplify_geometry(geometry, value as f32),
                 _ => geometry.clone(),
             };
+            stats.vertices_after += count_vertices(&geometry) as u64;
             let geom_data = encode_geometry(&geometry)?;
             let mut feature_builder = layer_builder.into_feature(geom_data);
             if let Some(id) = feature.id {
@@ -614,6 +629,7 @@ fn filter_tile_layers(
 
     tile.to_bytes()
         .map_err(|err| anyhow::anyhow!("encode vector tile: {err}"))
+        .map(|bytes| (bytes, stats))
 }
 
 fn fetch_tile_data(conn: &Connection, coord: TileCoord) -> Result<Option<Vec<u8>>> {
@@ -2258,7 +2274,7 @@ pub fn simplify_mbtiles_tile(
     coord: TileCoord,
     layers: &[String],
     tolerance: Option<f64>,
-) -> Result<()> {
+) -> Result<SimplifyStats> {
     ensure_mbtiles_path(input)?;
     ensure_mbtiles_path(output)?;
 
@@ -2292,7 +2308,7 @@ pub fn simplify_mbtiles_tile(
     let payload = decode_tile_payload(&data)?;
 
     let keep_layers: HashSet<String> = layers.iter().cloned().collect();
-    let filtered = filter_tile_layers(&payload, &keep_layers, tolerance)?;
+    let (filtered, stats) = simplify_tile_payload(&payload, &keep_layers, tolerance)?;
     let encoded = encode_tile_payload(&filtered, is_gzip)?;
 
     match schema_mode {
@@ -2321,5 +2337,5 @@ pub fn simplify_mbtiles_tile(
         }
     }
 
-    Ok(())
+    Ok(stats)
 }

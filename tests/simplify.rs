@@ -2,7 +2,8 @@ use std::path::Path;
 
 use mvt::{GeomEncoder, GeomType, Tile};
 use mvt_reader::Reader;
-use vt_optimizer::mbtiles::{simplify_mbtiles_tile, TileCoord};
+use vt_optimizer::mbtiles::{simplify_mbtiles_tile, InspectOptions, TileCoord};
+use vt_optimizer::pmtiles::{inspect_pmtiles_with_options, mbtiles_to_pmtiles, simplify_pmtiles_tile};
 
 fn create_layer_tile() -> Vec<u8> {
     let mut tile = Tile::new(4096);
@@ -178,4 +179,20 @@ fn simplify_mbtiles_tile_applies_tolerance() {
     } else {
         panic!("expected linestring geometry");
     }
+}
+
+#[test]
+fn simplify_pmtiles_tile_outputs_single_tile() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mbtiles = dir.path().join("input.mbtiles");
+    let pmtiles = dir.path().join("input.pmtiles");
+    let output = dir.path().join("output.pmtiles");
+    create_layer_mbtiles(&mbtiles);
+    mbtiles_to_pmtiles(&mbtiles, &pmtiles).expect("to pmtiles");
+
+    let coord = TileCoord { zoom: 0, x: 0, y: 0 };
+    simplify_pmtiles_tile(&pmtiles, &output, coord, &[], None).expect("simplify");
+
+    let report = inspect_pmtiles_with_options(&output, &InspectOptions::default()).expect("inspect");
+    assert_eq!(report.overall.tile_count, 1);
 }

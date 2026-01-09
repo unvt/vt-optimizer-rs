@@ -16,6 +16,7 @@
         "minzoom",
         "msvc",
         "peucker",
+        "planetiler",
         "pmtiles",
         "prost",
         "protoc",

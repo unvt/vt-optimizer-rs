@@ -1,4 +1,7 @@
-.PHONY: help build test release clean fmt clippy run install check
+-include .env
+export
+
+.PHONY: help build test release clean fmt clippy run install check inspect-mbtiles inspect-pmtiles
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -46,5 +49,19 @@ dev: fmt clippy test ## Run formatter, clippy, and tests (development workflow)
 ci: fmt-check clippy test ## Run CI checks locally
 
 all: clean build test ## Clean, build, and test
+
+inspect-mbtiles: ## Inspect MBTiles file (requires MBTILES_PATH in .env)
+	@if [ -z "$(MBTILES_PATH)" ]; then \
+		echo "Error: MBTILES_PATH is not set. Please set it in .env file"; \
+		exit 1; \
+	fi
+	cargo run -- inspect $(MBTILES_PATH)
+
+inspect-pmtiles: ## Inspect PMTiles file (requires PMTILES_PATH in .env)
+	@if [ -z "$(PMTILES_PATH)" ]; then \
+		echo "Error: PMTILES_PATH is not set. Please set it in .env file"; \
+		exit 1; \
+	fi
+	cargo run -- inspect $(PMTILES_PATH)
 
 .DEFAULT_GOAL := help

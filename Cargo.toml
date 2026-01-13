@@ -1,6 +1,6 @@
 [package]
 name = "vt-optimizer-rs"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -22,7 +22,6 @@ brotli = "8.0"
 mvt = "0.10.3"
 protobuf = "3.7"
 geo-types = "0.7"
-crossbeam-channel = "0.5"
 
 [dev-dependencies]
 

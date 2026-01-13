@@ -1,10 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.2.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -36,6 +38,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Install Protocol Buffers Compiler
         uses: arduino/setup-protoc@v3
@@ -87,11 +91,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Verify tag matches Cargo.toml version
         run: |
-          version=$(rg -n '^version = ' Cargo.toml | head -n 1 | sed -E 's/version = \"(.*)\"/\\1/')
-          tag="${GITHUB_REF_NAME#v}"
+          version=$(grep -E '^version = ' Cargo.toml | head -n 1 | sed -E 's/version = \"(.*)\"/\\1/')
+          tag="${{ inputs.tag }}"
+          tag="${tag#v}"
           echo "Cargo.toml version: ${version}"
           echo "Tag version: ${tag}"
           if [ "${version}" != "${tag}" ]; then
@@ -111,6 +118,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag }}
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -30,10 +30,14 @@ fmt-check: ## Check code formatting without making changes
 clippy: ## Run clippy linter
 	cargo clippy --all-targets --all-features -- -D warnings
 
-bump-version: ## Bump package version (requires VERSION env)
+bump-version: ## Bump package version (requires VERSION env, optional BUMP_BRANCH=1)
 	@if [ -z "$(VERSION)" ]; then \
 		echo "Error: VERSION is not set. Example: VERSION=0.2.0 make bump-version"; \
 		exit 1; \
+	fi
+	@if [ "$(BUMP_BRANCH)" = "1" ]; then \
+		branch="release/v$(VERSION)"; \
+		git switch -c "$$branch" 2>/dev/null || git switch "$$branch"; \
 	fi
 	@if command -v cargo-set-version >/dev/null 2>&1; then \
 		cargo set-version "$(VERSION)"; \

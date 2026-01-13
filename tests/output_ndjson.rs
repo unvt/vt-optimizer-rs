@@ -5,7 +5,9 @@ use vt_optimizer::mbtiles::{
     HistogramBucket, MbtilesReport, MbtilesStats, MbtilesZoomStats, TileSummary, TopTile,
     ZoomHistogram,
 };
-use vt_optimizer::output::{apply_tile_info_format, ndjson_lines, resolve_output_format, NdjsonOptions};
+use vt_optimizer::output::{
+    apply_tile_info_format, ndjson_lines, resolve_output_format, NdjsonOptions,
+};
 
 #[test]
 fn ndjson_splits_histograms_and_top_tile_summaries() {
@@ -439,9 +441,7 @@ fn ndjson_tile_info_format_compact_omits_property_keys() {
         },
     )
     .expect("ndjson");
-    let has_property_keys = lines
-        .iter()
-        .any(|line| line.contains("\"property_keys\""));
+    let has_property_keys = lines.iter().any(|line| line.contains("\"property_keys\""));
     assert!(!has_property_keys);
 }
 

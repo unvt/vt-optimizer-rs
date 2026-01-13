@@ -18,7 +18,12 @@ See [docs/HOW_TO.md](docs/HOW_TO.md).
 
 ## Install
 
-Build from source:
+Download a prebuilt binary from GitHub Releases and put it on your PATH:
+
+- Get the latest release artifact from [Releases](https://github.com/yuiseki/vt-optimizer-rs/releases).
+- Extract the archive and move `vt-optimizer` (or `vt-optimizer.exe`) into a directory on your PATH.
+
+Or build from source:
 
 ```bash
 cargo build --release
@@ -60,6 +65,17 @@ vt-optimizer inspect /path/to/tiles.mbtiles --output ndjson
 vt-optimizer optimize /path/to/tiles.mbtiles \
   --output /path/to/tiles.optimized.mbtiles \
   --style /path/to/style.json
+
+# tune parallel IO + memory and drop empty tiles
+vt-optimizer optimize /path/to/tiles.mbtiles \
+  --output /path/to/tiles.optimized.mbtiles \
+  --style /path/to/style.json \
+  --threads 16 \
+  --readers 8 \
+  --io-batch 2000 \
+  --read-cache-mb 2048 \
+  --write-cache-mb 4096 \
+  --drop-empty-tiles
 
 # vt-optimizer compatible mode (visibility only)
 vt-optimizer optimize /path/to/tiles.mbtiles \

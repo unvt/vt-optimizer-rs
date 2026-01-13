@@ -1193,7 +1193,8 @@ pub fn prune_pmtiles_layer_only(
                 max_zoom = max_zoom.max(z);
                 let encoded =
                     prune_tile_layers(&payload, z, style, &keep_layers, apply_filters, &mut stats)?;
-                let tile_data = encode_tile_payload_pmtiles(&encoded, header.tile_compression)?;
+                let tile_data =
+                    encode_tile_payload_pmtiles(&encoded.bytes, header.tile_compression)?;
                 tiles.push((tile_id, tile_data));
             }
         }

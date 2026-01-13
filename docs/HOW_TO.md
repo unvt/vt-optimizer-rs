@@ -46,6 +46,24 @@ cargo run -- optimize "$MBTILES_PATH" \
 
 The command prints a summary of removed features and layers.
 
+### Optional: maximize throughput and reduce empty tiles
+
+If you have many CPU cores and plenty of RAM, you can increase parallel readers,
+increase the in-flight tile queue, enlarge SQLite caches, and drop empty tiles
+to reduce output size:
+
+```bash
+cargo run -- optimize "$MBTILES_PATH" \
+  --style "$STYLE_PATH" \
+  --output "$OUTPUT_MBTILES_PATH" \
+  --threads 16 \
+  --readers 8 \
+  --io-batch 2000 \
+  --read-cache-mb 2048 \
+  --write-cache-mb 4096 \
+  --drop-empty-tiles
+```
+
 ## Optional: Verify optimized output
 
 ```bash

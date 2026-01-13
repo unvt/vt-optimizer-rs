@@ -20,6 +20,15 @@ The format is based on Keep a Changelog and adheres to Semantic Versioning.
 ### Security
 - TBD_UNVT_CHANGELOG_SECURITY
 
+## [0.3.0] - 2026-01-13
+
+### Added
+- parallel MBTiles prune with multi-reader pipeline.
+- prune options for SQLite read/write cache sizing and dropping empty tiles.
+
+### Changed
+- fallback to zoom-based reader partitioning when rowid is unavailable.
+
 ## [0.1.5] - 2026-01-13
 
 ### Added

@@ -173,8 +173,20 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub threads: Option<usize>,
 
+    #[arg(long)]
+    pub readers: Option<usize>,
+
     #[arg(long, default_value_t = 1_000)]
     pub io_batch: u32,
+
+    #[arg(long)]
+    pub read_cache_mb: Option<u64>,
+
+    #[arg(long)]
+    pub write_cache_mb: Option<u64>,
+
+    #[arg(long, default_value_t = false)]
+    pub drop_empty_tiles: bool,
 
     #[arg(long)]
     pub checkpoint: Option<PathBuf>,

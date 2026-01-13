@@ -630,7 +630,11 @@ vt-optimizer -m <mbtiles> [-s <style.json>] [-o <output>] [-z <z> -x <x> -y <y> 
 
 * `--max-tile-bytes <bytes>`: デフォルト 1,250KB。超過は警告のみ。
 * `--threads <n>`: ワーカ数（デフォルトは論理 CPU 数に基づく）
-* `--io-batch <n>`: writer のコミット粒度（タイル n 件ごと）
+* `--readers <n>`: 読み取りスレッド数（デフォルトは `--threads` と同等）
+* `--io-batch <n>`: 読み取り/処理キューの上限（タイル件数）
+* `--read-cache-mb <mb>`: 読み取り側 SQLite cache サイズ（MB）
+* `--write-cache-mb <mb>`: 書き込み側 SQLite cache サイズ（MB）
+* `--drop-empty-tiles`: prune 後に空タイルを出力しない（サイズ削減優先）
 * `--checkpoint <path>`: sidecar 状態ファイル（JSON/SQLite）
 * `--resume`: checkpoint があれば再開
 * `--log <level>`: `error|warn|info|debug|trace`

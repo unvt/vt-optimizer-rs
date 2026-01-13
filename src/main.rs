@@ -1,3 +1,5 @@
+use std::thread;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 
@@ -6,8 +8,8 @@ use vt_optimizer::cli::{Cli, Command, ReportFormat, TileSortArg};
 use vt_optimizer::format::{plan_copy, plan_optimize, resolve_output_path};
 use vt_optimizer::mbtiles::{
     copy_mbtiles, inspect_mbtiles_with_options, parse_sample_spec, parse_tile_spec,
-    prune_mbtiles_layer_only, simplify_mbtiles_tile, InspectOptions, PruneStats, TileListOptions,
-    TileSort,
+    prune_mbtiles_layer_only, simplify_mbtiles_tile, InspectOptions, PruneOptions, PruneStats,
+    TileListOptions, TileSort,
 };
 use vt_optimizer::output::{
     format_bytes, format_histogram_table, format_histograms_by_zoom_section,
@@ -134,7 +136,11 @@ fn main() -> Result<()> {
                     style_mode: vt_optimizer::cli::StyleMode::VtCompat,
                     max_tile_bytes: 1_280_000,
                     threads: None,
+                    readers: None,
                     io_batch: 1_000,
+                    read_cache_mb: None,
+                    write_cache_mb: None,
+                    drop_empty_tiles: false,
                     checkpoint: None,
                     resume: false,
                 };
@@ -635,8 +641,30 @@ fn run_optimize(args: vt_optimizer::cli::OptimizeArgs) -> Result<()> {
     match (decision.input, decision.output) {
         (vt_optimizer::format::TileFormat::Mbtiles, vt_optimizer::format::TileFormat::Mbtiles) => {
             let apply_filters = args.style_mode == vt_optimizer::cli::StyleMode::LayerFilter;
-            println!("- Processing tiles");
-            let stats = prune_mbtiles_layer_only(&args.input, &output_path, &style, apply_filters)?;
+            let threads = args.threads.unwrap_or_else(|| {
+                thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            });
+            let readers = args.readers.unwrap_or(threads);
+            println!(
+                "- Processing tiles (threads={threads}, readers={readers}, io_batch={})",
+                args.io_batch,
+            );
+            let stats = prune_mbtiles_layer_only(
+                &args.input,
+                &output_path,
+                &style,
+                apply_filters,
+                PruneOptions {
+                    threads,
+                    io_batch: args.io_batch,
+                    readers,
+                    read_cache_mb: args.read_cache_mb,
+                    write_cache_mb: args.write_cache_mb,
+                    drop_empty_tiles: args.drop_empty_tiles,
+                },
+            )?;
             println!("- Writing output file to {}", output_path.display());
             print_prune_summary(&stats);
         }

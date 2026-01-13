@@ -29,6 +29,7 @@
         "splitmix",
         "tile-prune",
         "tileset",
+        "tilesets",
         "topn",
         "varint"
     ],

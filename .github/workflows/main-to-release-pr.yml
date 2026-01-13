@@ -147,11 +147,23 @@ jobs:
               ? `## Included PRs\n\n${prLines.join('\\n')}`
               : 'No merged PRs found between main and release.';
 
+            let title = 'Merge main into release';
+            if (prList.length > 0) {
+              const latestMerged = prList
+                .filter((pr) => pr.merged_at)
+                .sort((a, b) => new Date(b.merged_at) - new Date(a.merged_at))[0];
+              if (latestMerged) {
+                const mergedAt = new Date(latestMerged.merged_at);
+                const iso = mergedAt.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+                title = `Release ${iso}`;
+              }
+            }
+
             await github.rest.pulls.create({
               owner,
               repo,
               head: 'main',
               base,
-              title: 'Merge main into release',
+              title,
               body: `Automated PR to promote main into release. Review and merge when ready.\n\n${summary}`,
             });

@@ -64,19 +64,6 @@ jobs:
               return;
             }
 
-            const { data: prs } = await github.rest.pulls.list({
-              owner,
-              repo,
-              state: 'open',
-              head,
-              base,
-            });
-
-            if (prs.length > 0) {
-              core.info('Open PR already exists.');
-              return;
-            }
-
             const prMap = new Map();
 
             async function addPrByNumber(number) {
@@ -144,14 +131,49 @@ jobs:
             const prList = Array.from(prMap.values()).sort((a, b) => a.number - b.number);
             const prLines = prList.map((pr) => `- ${pr.html_url} by @${pr.user.login}`);
             const summary = prLines.length > 0
-              ? `## Included PRs\n\n${prLines.join('\\n')}`
+              ? `## Included PRs\n\n${prLines.join('\n')}`
               : 'No merged PRs found between main and release.';
+
+            let title = 'Merge main into release';
+            if (prList.length > 0) {
+              const latestMerged = prList
+                .filter((pr) => pr.merged_at)
+                .sort((a, b) => new Date(b.merged_at) - new Date(a.merged_at))[0];
+              if (latestMerged) {
+                const mergedAt = new Date(latestMerged.merged_at);
+                const iso = mergedAt.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+                title = `Release ${iso}`;
+              }
+            }
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head,
+              base,
+            });
+
+            const body = `Automated PR to promote main into release. Review and merge when ready.\n\n${summary}`;
+
+            if (prs.length > 0) {
+              const pr = prs[0];
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: pr.number,
+                title,
+                body,
+              });
+              core.info(`Updated existing PR #${pr.number}.`);
+              return;
+            }
 
             await github.rest.pulls.create({
               owner,
               repo,
               head: 'main',
               base,
-              title: 'Merge main into release',
-              body: `Automated PR to promote main into release. Review and merge when ready.\n\n${summary}`,
+              title,
+              body,
             });

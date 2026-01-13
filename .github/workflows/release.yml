@@ -88,6 +88,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          version=$(rg -n '^version = ' Cargo.toml | head -n 1 | sed -E 's/version = \"(.*)\"/\\1/')
+          tag="${GITHUB_REF_NAME#v}"
+          echo "Cargo.toml version: ${version}"
+          echo "Tag version: ${tag}"
+          if [ "${version}" != "${tag}" ]; then
+            echo "Error: tag (v${tag}) does not match Cargo.toml version (${version})"
+            exit 1
+          fi
+
       - name: Download artifacts
         uses: actions/download-artifact@v7
         with:

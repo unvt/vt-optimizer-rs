@@ -131,7 +131,7 @@ jobs:
             const prList = Array.from(prMap.values()).sort((a, b) => a.number - b.number);
             const prLines = prList.map((pr) => `- ${pr.html_url} by @${pr.user.login}`);
             const summary = prLines.length > 0
-              ? `## Included PRs\n\n${prLines.join('\\n')}`
+              ? `## Included PRs\n\n${prLines.join('\n')}`
               : 'No merged PRs found between main and release.';
 
             let title = 'Merge main into release';

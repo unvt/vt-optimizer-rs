@@ -1438,6 +1438,14 @@ fn apply_write_pragmas_with_cache(conn: &Connection, cache_mb: Option<u64>) -> R
     Ok(())
 }
 
+fn supports_rowid(conn: &Connection, table: &str) -> Result<bool> {
+    let query = format!("SELECT rowid FROM {table} LIMIT 1",);
+    match conn.query_row(&query, [], |_row| Ok(())) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
 fn fetch_zoom_counts(conn: &Connection) -> Result<BTreeMap<u8, u64>> {
     let source = tiles_source_clause(conn)?;
     let zoom_col = if source == "tiles" {
@@ -2311,80 +2319,165 @@ pub fn prune_mbtiles_layer_only(
     drop(tx_out);
 
     let ranges = match schema_mode {
-        TilesSchemaMode::Tiles => rowid_ranges(&input_conn, "tiles", reader_count)?,
-        TilesSchemaMode::MapImages => rowid_ranges(&input_conn, "map", reader_count)?,
+        TilesSchemaMode::Tiles => rowid_ranges(&input_conn, "tiles", reader_count).ok(),
+        TilesSchemaMode::MapImages => rowid_ranges(&input_conn, "map", reader_count).ok(),
+    };
+    let rowid_available = match schema_mode {
+        TilesSchemaMode::Tiles => supports_rowid(&input_conn, "tiles")?,
+        TilesSchemaMode::MapImages => supports_rowid(&input_conn, "map")?,
     };
 
-    let mut reader_handles = Vec::with_capacity(ranges.len());
-    for (start_rowid, end_rowid) in ranges {
-        let tx_in = tx_in.clone();
-        let input_path = input.to_path_buf();
-        reader_handles.push(thread::spawn(move || -> Result<()> {
-            let input_conn = Connection::open(&input_path).with_context(|| {
-                format!("failed to open input mbtiles: {}", input_path.display())
-            })?;
-            apply_read_pragmas_with_cache(&input_conn, options.read_cache_mb)?;
-            match schema_mode {
-                TilesSchemaMode::Tiles => {
-                    let mut stmt = input_conn
-                        .prepare(
-                            "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles WHERE rowid BETWEEN ?1 AND ?2 ORDER BY rowid",
-                        )
-                        .context("prepare tile scan")?;
-                    let mut rows = stmt
-                        .query(params![start_rowid, end_rowid])
-                        .context("query tiles")?;
-                    while let Some(row) = rows.next().context("read tile row")? {
-                        let zoom: u8 = row.get(0)?;
-                        let x: u32 = row.get(1)?;
-                        let y: u32 = row.get(2)?;
-                        let data: Vec<u8> = row.get(3)?;
-                        if tx_in
-                            .send(TileInput {
-                                zoom,
-                                x,
-                                y,
-                                data,
-                                map_images: false,
-                            })
-                            .is_err()
-                        {
-                            break;
+    let reader_handles = if rowid_available {
+        let ranges = ranges.unwrap_or_default();
+        let mut handles = Vec::with_capacity(ranges.len());
+        for (start_rowid, end_rowid) in ranges {
+            let tx_in = tx_in.clone();
+            let input_path = input.to_path_buf();
+            let read_cache_mb = options.read_cache_mb;
+            handles.push(thread::spawn(move || -> Result<()> {
+                let input_conn = Connection::open(&input_path).with_context(|| {
+                    format!("failed to open input mbtiles: {}", input_path.display())
+                })?;
+                apply_read_pragmas_with_cache(&input_conn, read_cache_mb)?;
+                match schema_mode {
+                    TilesSchemaMode::Tiles => {
+                        let mut stmt = input_conn
+                            .prepare(
+                                "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles WHERE rowid BETWEEN ?1 AND ?2 ORDER BY rowid",
+                            )
+                            .context("prepare tile scan")?;
+                        let mut rows = stmt
+                            .query(params![start_rowid, end_rowid])
+                            .context("query tiles")?;
+                        while let Some(row) = rows.next().context("read tile row")? {
+                            let zoom: u8 = row.get(0)?;
+                            let x: u32 = row.get(1)?;
+                            let y: u32 = row.get(2)?;
+                            let data: Vec<u8> = row.get(3)?;
+                            if tx_in
+                                .send(TileInput {
+                                    zoom,
+                                    x,
+                                    y,
+                                    data,
+                                    map_images: false,
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    TilesSchemaMode::MapImages => {
+                        let mut stmt = input_conn
+                            .prepare(
+                                "SELECT map.zoom_level, map.tile_column, map.tile_row, images.tile_data FROM map JOIN images ON map.tile_id = images.tile_id WHERE map.rowid BETWEEN ?1 AND ?2 ORDER BY map.rowid",
+                            )
+                            .context("prepare map/images scan")?;
+                        let mut rows = stmt
+                            .query(params![start_rowid, end_rowid])
+                            .context("query map/images")?;
+                        while let Some(row) = rows.next().context("read map/images row")? {
+                            let zoom: u8 = row.get(0)?;
+                            let x: u32 = row.get(1)?;
+                            let y: u32 = row.get(2)?;
+                            let data: Vec<u8> = row.get(3)?;
+                            if tx_in
+                                .send(TileInput {
+                                    zoom,
+                                    x,
+                                    y,
+                                    data,
+                                    map_images: true,
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
                     }
                 }
-                TilesSchemaMode::MapImages => {
-                    let mut stmt = input_conn
-                        .prepare(
-                            "SELECT map.zoom_level, map.tile_column, map.tile_row, images.tile_data FROM map JOIN images ON map.tile_id = images.tile_id WHERE map.rowid BETWEEN ?1 AND ?2 ORDER BY map.rowid",
-                        )
-                        .context("prepare map/images scan")?;
-                    let mut rows = stmt
-                        .query(params![start_rowid, end_rowid])
-                        .context("query map/images")?;
-                    while let Some(row) = rows.next().context("read map/images row")? {
-                        let zoom: u8 = row.get(0)?;
-                        let x: u32 = row.get(1)?;
-                        let y: u32 = row.get(2)?;
-                        let data: Vec<u8> = row.get(3)?;
-                        if tx_in
-                            .send(TileInput {
-                                zoom,
-                                x,
-                                y,
-                                data,
-                                map_images: true,
-                            })
-                            .is_err()
-                        {
-                            break;
+                Ok(())
+            }));
+        }
+        handles
+    } else {
+        let zoom_groups = zoom_partitions(&input_conn, reader_count)?;
+        let mut handles = Vec::with_capacity(zoom_groups.len());
+        for zooms in zoom_groups {
+            let tx_in = tx_in.clone();
+            let input_path = input.to_path_buf();
+            let read_cache_mb = options.read_cache_mb;
+            handles.push(thread::spawn(move || -> Result<()> {
+                let input_conn = Connection::open(&input_path).with_context(|| {
+                    format!("failed to open input mbtiles: {}", input_path.display())
+                })?;
+                apply_read_pragmas_with_cache(&input_conn, read_cache_mb)?;
+                match schema_mode {
+                    TilesSchemaMode::Tiles => {
+                        let mut stmt = input_conn
+                            .prepare(
+                                "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles WHERE zoom_level = ?1 ORDER BY zoom_level, tile_column, tile_row",
+                            )
+                            .context("prepare tile scan by zoom")?;
+                        for zoom in zooms {
+                            let mut rows = stmt.query(params![zoom]).context("query tiles")?;
+                            while let Some(row) = rows.next().context("read tile row")? {
+                                let zoom: u8 = row.get(0)?;
+                                let x: u32 = row.get(1)?;
+                                let y: u32 = row.get(2)?;
+                                let data: Vec<u8> = row.get(3)?;
+                                if tx_in
+                                    .send(TileInput {
+                                        zoom,
+                                        x,
+                                        y,
+                                        data,
+                                        map_images: false,
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    TilesSchemaMode::MapImages => {
+                        let mut stmt = input_conn
+                            .prepare(
+                                "SELECT map.zoom_level, map.tile_column, map.tile_row, images.tile_data FROM map JOIN images ON map.tile_id = images.tile_id WHERE map.zoom_level = ?1 ORDER BY map.zoom_level, map.tile_column, map.tile_row",
+                            )
+                            .context("prepare map/images scan by zoom")?;
+                        for zoom in zooms {
+                            let mut rows = stmt
+                                .query(params![zoom])
+                                .context("query map/images")?;
+                            while let Some(row) = rows.next().context("read map/images row")? {
+                                let zoom: u8 = row.get(0)?;
+                                let x: u32 = row.get(1)?;
+                                let y: u32 = row.get(2)?;
+                                let data: Vec<u8> = row.get(3)?;
+                                if tx_in
+                                    .send(TileInput {
+                                        zoom,
+                                        x,
+                                        y,
+                                        data,
+                                        map_images: true,
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
-            }
-            Ok(())
-        }));
-    }
+                Ok(())
+            }));
+        }
+        handles
+    };
     drop(tx_in);
 
     let mut stats = PruneStats::default();
@@ -2464,6 +2557,26 @@ fn rowid_ranges(conn: &Connection, table: &str, readers: usize) -> Result<Vec<(i
         ranges.push((start, end));
     }
     Ok(ranges)
+}
+
+fn zoom_partitions(conn: &Connection, readers: usize) -> Result<Vec<Vec<u8>>> {
+    let mut counts: Vec<(u8, u64)> = fetch_zoom_counts(conn)?.into_iter().collect();
+    if counts.is_empty() {
+        return Ok(Vec::new());
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    let reader_count = readers.max(1);
+    let mut groups: Vec<(u64, Vec<u8>)> = (0..reader_count).map(|_| (0u64, Vec::new())).collect();
+    for (zoom, count) in counts {
+        let (idx, _min) = groups
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (total, _))| *total)
+            .unwrap();
+        groups[idx].0 += count;
+        groups[idx].1.push(zoom);
+    }
+    Ok(groups.into_iter().map(|(_, zooms)| zooms).collect())
 }
 
 #[derive(Debug)]

@@ -22,6 +22,37 @@ jobs:
             const head = `${owner}:main`;
             const base = 'release';
 
+            async function ensureReleaseBranch() {
+              try {
+                await github.rest.git.getRef({
+                  owner,
+                  repo,
+                  ref: `heads/${base}`,
+                });
+                return;
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              }
+
+              const { data: mainRef } = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: 'heads/main',
+              });
+
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: `refs/heads/${base}`,
+                sha: mainRef.object.sha,
+              });
+              core.info('Created release branch from main.');
+            }
+
+            await ensureReleaseBranch();
+
             const { data: prs } = await github.rest.pulls.list({
               owner,
               repo,

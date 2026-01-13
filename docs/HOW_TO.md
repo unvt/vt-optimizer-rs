@@ -4,15 +4,18 @@ Purpose: Provide a reproducible, low-context workflow for inspecting and optimiz
 
 ## Prerequisites
 
-- `monaco.mbtiles` and `rivers.json` are available (see `.env` defaults).
+- Prepare an MBTiles file (e.g., a Monaco tileset).
+- Optional: prepare a Mapbox/MapLibre style JSON if you want style-based optimize.
 - Build the CLI: `cargo build --release` (or use `cargo run` in dev).
 
 ## Inspect (context-saving)
 
-Use a minimal summary + layer list with sampling for quick overview:
+Set an environment variable for your tileset, then run a minimal summary + layer list with sampling:
 
 ```bash
-cargo run -- inspect /everything/src/github.com/yuiseki/planetiler-ai/data/monaco.mbtiles \
+export MBTILES_PATH=path/to/monaco.mbtiles
+
+cargo run -- inspect "$MBTILES_PATH" \
   --stats summary,layers \
   --fast
 ```
@@ -27,15 +30,18 @@ Notes:
 If the output file already exists, remove it first:
 
 ```bash
-rm -f ./tmp/monaco.optimized.mbtiles
+export OUTPUT_MBTILES_PATH=./tmp/monaco.optimized.mbtiles
+rm -f "$OUTPUT_MBTILES_PATH"
 ```
 
-Run optimize with a style filter:
+Run optimize with a style filter (optional but recommended when you have a style file):
 
 ```bash
-cargo run -- optimize /everything/src/github.com/yuiseki/planetiler-ai/data/monaco.mbtiles \
-  --style /everything/src/github.com/yuiseki/planetiler-ai/data/rivers.json \
-  --output ./tmp/monaco.optimized.mbtiles
+export STYLE_PATH=path/to/style.json
+
+cargo run -- optimize "$MBTILES_PATH" \
+  --style "$STYLE_PATH" \
+  --output "$OUTPUT_MBTILES_PATH"
 ```
 
 The command prints a summary of removed features and layers.
@@ -43,5 +49,5 @@ The command prints a summary of removed features and layers.
 ## Optional: Verify optimized output
 
 ```bash
-cargo run -- inspect ./tmp/monaco.optimized.mbtiles --stats summary,layers --fast
+cargo run -- inspect "$OUTPUT_MBTILES_PATH" --stats summary,layers --fast
 ```

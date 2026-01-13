@@ -120,6 +120,10 @@ vt-optimizer -m /path/to/tiles.mbtiles -z 10 -x 908 -y 396
 cargo test
 ```
 
+## Release flow
+
+See [docs/RELEASE.md](docs/RELEASE.md) for the main → release process and tagging rules.
+
 ## DPG context
 
 vt-optimizer-rs is intended for public-interest geospatial workflows, including UNVT use cases. The project follows Digital Public Goods (DPG) guidelines and provides documentation to support transparent ownership, privacy, and safe use.

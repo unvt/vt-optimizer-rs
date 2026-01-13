@@ -53,6 +53,17 @@ jobs:
 
             await ensureReleaseBranch();
 
+            const { data: comparison } = await github.rest.repos.compareCommits({
+              owner,
+              repo,
+              base,
+              head: 'main',
+            });
+            if (comparison.behind_by === 0 && comparison.ahead_by === 0) {
+              core.info('No commits between release and main. Skipping PR.');
+              return;
+            }
+
             const { data: prs } = await github.rest.pulls.list({
               owner,
               repo,

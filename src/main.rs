@@ -210,6 +210,7 @@ fn main() -> Result<()> {
                     topn: None,
                     sample: None,
                     output: vt_optimizer::cli::ReportFormat::Text,
+                    stats: None,
                     no_progress: false,
                     zoom: None,
                     bucket: None,
@@ -235,6 +236,7 @@ fn main() -> Result<()> {
                 topn: None,
                 sample: None,
                 output: vt_optimizer::cli::ReportFormat::Text,
+                stats: None,
                 no_progress: false,
                 zoom: None,
                 bucket: None,
@@ -340,7 +342,9 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
             inspect_pmtiles_with_options(&args.input, &options)?
         }
     };
+    let stats_filter = vt_optimizer::output::parse_stats_filter(args.stats.as_deref())?;
     let report = vt_optimizer::output::apply_tile_info_format(report, args.tile_info_format);
+    let report = vt_optimizer::output::apply_stats_filter(report, &stats_filter);
     match output {
         ReportFormat::Json => {
             let json = serde_json::to_string_pretty(&report)?;
@@ -348,7 +352,9 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
         }
         ReportFormat::Ndjson => {
             let options = vt_optimizer::output::NdjsonOptions {
-                include_summary: !args.ndjson_lite && !args.ndjson_compact,
+                include_summary: !args.ndjson_lite
+                    && !args.ndjson_compact
+                    && stats_filter.includes(vt_optimizer::output::StatsSection::Summary),
                 compact: args.ndjson_compact,
             };
             for line in ndjson_lines(&report, options)? {
@@ -356,36 +362,59 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
             }
         }
         ReportFormat::Text => {
+            let include_metadata =
+                stats_filter.includes(vt_optimizer::output::StatsSection::Metadata);
+            let include_summary =
+                stats_filter.includes(vt_optimizer::output::StatsSection::Summary);
+            let include_zoom = stats_filter.includes(vt_optimizer::output::StatsSection::Zoom);
+            let include_histogram =
+                stats_filter.includes(vt_optimizer::output::StatsSection::Histogram);
+            let include_histogram_by_zoom =
+                stats_filter.includes(vt_optimizer::output::StatsSection::HistogramByZoom);
+            let include_layers = stats_filter.includes(vt_optimizer::output::StatsSection::Layers);
+            let include_recommendations =
+                stats_filter.includes(vt_optimizer::output::StatsSection::Recommendations);
+            let include_bucket = stats_filter.includes(vt_optimizer::output::StatsSection::Bucket);
+            let include_bucket_tiles =
+                stats_filter.includes(vt_optimizer::output::StatsSection::BucketTiles);
+            let include_top_tiles =
+                stats_filter.includes(vt_optimizer::output::StatsSection::TopTiles);
+            let include_top_tile_summaries =
+                stats_filter.includes(vt_optimizer::output::StatsSection::TopTileSummaries);
+            let include_tile_summary =
+                stats_filter.includes(vt_optimizer::output::StatsSection::TileSummary);
             println!(
                 "# Vector tile inspection of [{}] by vt-optimizer",
                 args.input.display()
             );
             println!();
-            if !report.metadata.is_empty() {
+            if include_metadata && !report.metadata.is_empty() {
                 for line in format_metadata_section(&report.metadata) {
                     println!("{}", emphasize_section_heading(&line));
                 }
                 println!();
             }
-            println!("{}", emphasize_section_heading("## Summary"));
-            println!(
-                "- tiles: {} total: {} max: {} avg: {}",
-                report.overall.tile_count,
-                format_bytes(report.overall.total_bytes),
-                format_bytes(report.overall.max_bytes),
-                format_bytes(report.overall.avg_bytes)
-            );
-            println!(
-                "- empty_tiles: {} empty_ratio: {:.4}",
-                report.empty_tiles, report.empty_ratio
-            );
-            if report.sampled {
+            if include_summary {
+                println!("{}", emphasize_section_heading("## Summary"));
                 println!(
-                    "- sample: used={} total={}",
-                    report.sample_used_tiles, report.sample_total_tiles
+                    "- tiles: {} total: {} max: {} avg: {}",
+                    report.overall.tile_count,
+                    format_bytes(report.overall.total_bytes),
+                    format_bytes(report.overall.max_bytes),
+                    format_bytes(report.overall.avg_bytes)
                 );
+                println!(
+                    "- empty_tiles: {} empty_ratio: {:.4}",
+                    report.empty_tiles, report.empty_ratio
+                );
+                if report.sampled {
+                    println!(
+                        "- sample: used={} total={}",
+                        report.sample_used_tiles, report.sample_total_tiles
+                    );
+                }
             }
-            if !report.by_zoom.is_empty() {
+            if include_zoom && !report.by_zoom.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Zoom"));
                 for zoom in report.by_zoom.iter() {
@@ -399,21 +428,21 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
                     );
                 }
             }
-            if !report.histogram.is_empty() {
+            if include_histogram && !report.histogram.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Histogram"));
                 for line in format_histogram_table(&report.histogram) {
                     println!("{}", emphasize_table_header(&line));
                 }
             }
-            if !report.histograms_by_zoom.is_empty() {
+            if include_histogram_by_zoom && !report.histograms_by_zoom.is_empty() {
                 println!();
                 for line in format_histograms_by_zoom_section(&report.histograms_by_zoom) {
                     let line = emphasize_section_heading(&line);
                     println!("{}", emphasize_table_header(&line));
                 }
             }
-            if !report.file_layers.is_empty() {
+            if include_layers && !report.file_layers.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Layers"));
                 let name_width = report
@@ -479,7 +508,7 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
                     );
                 }
             }
-            if !report.recommended_buckets.is_empty() {
+            if include_recommendations && !report.recommended_buckets.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Recommendations"));
                 println!(
@@ -492,12 +521,14 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
                         .join(",")
                 );
             }
-            if let Some(count) = report.bucket_count {
-                println!();
-                println!("{}", emphasize_section_heading("## Bucket"));
-                println!("- count: {}", count);
+            if include_bucket {
+                if let Some(count) = report.bucket_count {
+                    println!();
+                    println!("{}", emphasize_section_heading("## Bucket"));
+                    println!("- count: {}", count);
+                }
             }
-            if !report.bucket_tiles.is_empty() {
+            if include_bucket_tiles && !report.bucket_tiles.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Bucket Tiles"));
                 for tile in report.bucket_tiles.iter() {
@@ -507,7 +538,7 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
                     );
                 }
             }
-            if !report.top_tiles.is_empty() {
+            if include_top_tiles && !report.top_tiles.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Top Tiles"));
                 for tile in report.top_tiles.iter() {
@@ -517,7 +548,7 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
                     );
                 }
             }
-            if !report.top_tile_summaries.is_empty() {
+            if include_top_tile_summaries && !report.top_tile_summaries.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Top Tile Summaries"));
                 for summary in report.top_tile_summaries.iter() {
@@ -544,31 +575,33 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
                     }
                 }
             }
-            if let Some(summary) = report.tile_summary.as_ref() {
-                println!();
-                println!("{}", emphasize_section_heading("## Tile Summary"));
-                println!(
-                    "- z={} x={} y={} layers={} total_features={} vertices={} keys={} values={}",
-                    summary.zoom,
-                    summary.x,
-                    summary.y,
-                    summary.layer_count,
-                    summary.total_features,
-                    summary.vertex_count,
-                    summary.property_key_count,
-                    summary.property_value_count
-                );
-                for layer in summary.layers.iter() {
+            if include_tile_summary {
+                if let Some(summary) = report.tile_summary.as_ref() {
+                    println!();
+                    println!("{}", emphasize_section_heading("## Tile Summary"));
                     println!(
-                        "  layer: {} features={} vertices={} property_keys={} values={}",
-                        layer.name,
-                        layer.feature_count,
-                        layer.vertex_count,
-                        layer.property_key_count,
-                        layer.property_value_count
+                        "- z={} x={} y={} layers={} total_features={} vertices={} keys={} values={}",
+                        summary.zoom,
+                        summary.x,
+                        summary.y,
+                        summary.layer_count,
+                        summary.total_features,
+                        summary.vertex_count,
+                        summary.property_key_count,
+                        summary.property_value_count
                     );
-                    if !layer.property_keys.is_empty() {
-                        println!("    keys: {}", layer.property_keys.join(","));
+                    for layer in summary.layers.iter() {
+                        println!(
+                            "  layer: {} features={} vertices={} property_keys={} values={}",
+                            layer.name,
+                            layer.feature_count,
+                            layer.vertex_count,
+                            layer.property_key_count,
+                            layer.property_value_count
+                        );
+                        if !layer.property_keys.is_empty() {
+                            println!("    keys: {}", layer.property_keys.join(","));
+                        }
                     }
                 }
             }

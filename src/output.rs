@@ -7,6 +7,91 @@ use std::collections::BTreeMap;
 
 use crate::mbtiles::{HistogramBucket, MbtilesReport, ZoomHistogram};
 
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StatsSection {
+    Metadata,
+    Summary,
+    Zoom,
+    Histogram,
+    HistogramByZoom,
+    Layers,
+    Recommendations,
+    Bucket,
+    BucketTiles,
+    TopTiles,
+    TileSummary,
+    TopTileSummaries,
+}
+
+#[derive(Debug, Clone)]
+pub struct StatsFilter {
+    include_all: bool,
+    sections: BTreeSet<StatsSection>,
+}
+
+impl StatsFilter {
+    pub fn all() -> Self {
+        Self {
+            include_all: true,
+            sections: BTreeSet::new(),
+        }
+    }
+
+    pub fn includes(&self, section: StatsSection) -> bool {
+        self.include_all || self.sections.contains(&section)
+    }
+}
+
+pub fn parse_stats_filter(value: Option<&str>) -> Result<StatsFilter> {
+    let Some(value) = value else {
+        return Ok(StatsFilter::all());
+    };
+    let mut sections = BTreeSet::new();
+    for raw in value.split(',') {
+        let token = raw.trim().to_ascii_lowercase();
+        if token.is_empty() {
+            continue;
+        }
+        if token == "all" {
+            return Ok(StatsFilter::all());
+        }
+        let section = match token.as_str() {
+            "metadata" => StatsSection::Metadata,
+            "summary" => StatsSection::Summary,
+            "zoom" => StatsSection::Zoom,
+            "histogram" => StatsSection::Histogram,
+            "histogram_by_zoom" | "histograms_by_zoom" | "zoom_histogram" | "zoom_histograms" => {
+                StatsSection::HistogramByZoom
+            }
+            "layers" => StatsSection::Layers,
+            "recommendations" | "recommended_buckets" => StatsSection::Recommendations,
+            "bucket" => StatsSection::Bucket,
+            "bucket_tiles" | "bucket_tile" => StatsSection::BucketTiles,
+            "top_tiles" | "top_tile" => StatsSection::TopTiles,
+            "tile_summary" => StatsSection::TileSummary,
+            "top_tile_summaries" | "top_tile_summary" => StatsSection::TopTileSummaries,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "unknown stats section: {} (possible values: metadata, summary, zoom, histogram, histogram_by_zoom, layers, recommendations, bucket, bucket_tiles, top_tiles, tile_summary, top_tile_summaries, all)",
+                    token
+                ))
+            }
+        };
+        sections.insert(section);
+    }
+    if sections.is_empty() {
+        return Err(anyhow::anyhow!(
+            "stats list must not be empty (possible values: metadata, summary, zoom, histogram, histogram_by_zoom, layers, recommendations, bucket, bucket_tiles, top_tiles, tile_summary, top_tile_summaries, all)"
+        ));
+    }
+    Ok(StatsFilter {
+        include_all: false,
+        sections,
+    })
+}
+
 pub fn resolve_output_format(requested: ReportFormat, ndjson_compact: bool) -> ReportFormat {
     if ndjson_compact {
         ReportFormat::Ndjson
@@ -33,6 +118,54 @@ pub fn apply_tile_info_format(mut report: MbtilesReport, format: TileInfoFormat)
                 layer.property_keys.clear();
             }
         }
+    }
+    report
+}
+
+pub fn apply_stats_filter(mut report: MbtilesReport, filter: &StatsFilter) -> MbtilesReport {
+    if !filter.includes(StatsSection::Metadata) {
+        report.metadata.clear();
+    }
+    if !filter.includes(StatsSection::Summary) {
+        report.overall.tile_count = 0;
+        report.overall.total_bytes = 0;
+        report.overall.max_bytes = 0;
+        report.overall.avg_bytes = 0;
+        report.empty_tiles = 0;
+        report.empty_ratio = 0.0;
+        report.sampled = false;
+        report.sample_total_tiles = 0;
+        report.sample_used_tiles = 0;
+    }
+    if !filter.includes(StatsSection::Zoom) {
+        report.by_zoom.clear();
+    }
+    if !filter.includes(StatsSection::Histogram) {
+        report.histogram.clear();
+    }
+    if !filter.includes(StatsSection::HistogramByZoom) {
+        report.histograms_by_zoom.clear();
+    }
+    if !filter.includes(StatsSection::Layers) {
+        report.file_layers.clear();
+    }
+    if !filter.includes(StatsSection::Recommendations) {
+        report.recommended_buckets.clear();
+    }
+    if !filter.includes(StatsSection::Bucket) {
+        report.bucket_count = None;
+    }
+    if !filter.includes(StatsSection::BucketTiles) {
+        report.bucket_tiles.clear();
+    }
+    if !filter.includes(StatsSection::TopTiles) {
+        report.top_tiles.clear();
+    }
+    if !filter.includes(StatsSection::TileSummary) {
+        report.tile_summary = None;
+    }
+    if !filter.includes(StatsSection::TopTileSummaries) {
+        report.top_tile_summaries.clear();
     }
     report
 }

@@ -83,6 +83,10 @@ pub struct InspectArgs {
     #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
     pub output: ReportFormat,
 
+    /// Limit output sections (comma-separated). See error output for allowed values.
+    #[arg(long, num_args = 0..=1, default_missing_value = "")]
+    pub stats: Option<String>,
+
     /// Disable the progress bar.
     #[arg(long, default_value_t = false)]
     pub no_progress: bool,

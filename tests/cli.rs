@@ -128,6 +128,8 @@ fn parse_inspect_options() {
         "12",
         "--output",
         "json",
+        "--stats",
+        "summary,zoom",
         "--no-progress",
         "--zoom",
         "3",
@@ -158,6 +160,7 @@ fn parse_inspect_options() {
             assert_eq!(args.topn, Some(5));
             assert_eq!(args.histogram_buckets, 12);
             assert_eq!(args.output, ReportFormat::Json);
+            assert_eq!(args.stats.as_deref(), Some("summary,zoom"));
             assert!(args.no_progress);
             assert_eq!(args.zoom, Some(3));
             assert_eq!(args.bucket, Some(2));
@@ -204,6 +207,7 @@ fn inspect_help_describes_fields() {
 
     assert!(help.contains("Sampling strategy"));
     assert!(help.contains("Output format"));
+    assert!(help.contains("Limit output sections"));
     assert!(help.contains("Fast defaults"));
     assert!(help.contains("Histogram bucket index"));
     assert!(help.contains("NDJSON"));

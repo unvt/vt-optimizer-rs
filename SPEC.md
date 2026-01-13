@@ -539,6 +539,12 @@ v0.0.4 では以下を **含めない**。
   * `compact` は keys の一覧を省略（text/json/ndjson 共通）
   * 既定は `full`
 
+## 1.63 マイルストーン（v0.1.4）
+
+* `inspect --stats <list>` で出力セクションを選別
+  * text/json/ndjson で一貫して適用
+  * `--output` の種類に関わらず指定した項目のみ出力
+
 ## 2. 用語
 
 * **Tile key**: `z/x/y`（内部表現は XYZ）

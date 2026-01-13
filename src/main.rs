@@ -140,6 +140,7 @@ fn main() -> Result<()> {
                     io_batch: 1_000,
                     read_cache_mb: None,
                     write_cache_mb: None,
+                    drop_empty_tiles: false,
                     checkpoint: None,
                     resume: false,
                 };
@@ -661,6 +662,7 @@ fn run_optimize(args: vt_optimizer::cli::OptimizeArgs) -> Result<()> {
                     readers,
                     read_cache_mb: args.read_cache_mb,
                     write_cache_mb: args.write_cache_mb,
+                    drop_empty_tiles: args.drop_empty_tiles,
                 },
             )?;
             println!("- Writing output file to {}", output_path.display());

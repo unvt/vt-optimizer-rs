@@ -135,6 +135,7 @@ fn prune_mbtiles_removes_unlisted_layers() {
             readers: 1,
             read_cache_mb: None,
             write_cache_mb: None,
+            drop_empty_tiles: false,
         },
     )
     .expect("prune mbtiles");
@@ -179,6 +180,7 @@ fn prune_mbtiles_supports_map_images_schema() {
             readers: 1,
             read_cache_mb: None,
             write_cache_mb: None,
+            drop_empty_tiles: false,
         },
     )
     .expect("prune mbtiles");
@@ -214,6 +216,7 @@ fn prune_mbtiles_handles_multiple_tiles() {
             readers: 2,
             read_cache_mb: None,
             write_cache_mb: None,
+            drop_empty_tiles: false,
         },
     )
     .expect("prune mbtiles");
@@ -287,6 +290,7 @@ fn prune_mbtiles_filters_features_by_style() {
             readers: 2,
             read_cache_mb: None,
             write_cache_mb: None,
+            drop_empty_tiles: false,
         },
     )
     .expect("prune mbtiles");
@@ -340,6 +344,7 @@ fn prune_mbtiles_keeps_features_on_unknown_filter() {
             readers: 2,
             read_cache_mb: None,
             write_cache_mb: None,
+            drop_empty_tiles: false,
         },
     )
     .expect("prune mbtiles");
@@ -385,10 +390,47 @@ fn prune_mbtiles_handles_multiple_readers() {
             readers: 2,
             read_cache_mb: None,
             write_cache_mb: None,
+            drop_empty_tiles: false,
         },
     )
     .expect("prune mbtiles");
 
     let report = inspect_mbtiles(&output).expect("inspect output");
     assert_eq!(report.overall.tile_count, 2);
+}
+
+#[test]
+fn prune_mbtiles_drop_empty_tiles() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("input.mbtiles");
+    let output = dir.path().join("output.mbtiles");
+    let style = dir.path().join("style.json");
+
+    create_layer_mbtiles_multiple(&input);
+
+    fs::write(
+        &style,
+        r#"{"version":8,"sources":{"osm":{"type":"vector"}},"layers":[{"id":"nope","type":"line","source":"osm","source-layer":"nope"}]}"#,
+    )
+    .expect("write style");
+    let style = read_style(&style).expect("read style");
+
+    prune_mbtiles_layer_only(
+        &input,
+        &output,
+        &style,
+        false,
+        PruneOptions {
+            threads: 2,
+            io_batch: 10,
+            readers: 1,
+            read_cache_mb: None,
+            write_cache_mb: None,
+            drop_empty_tiles: true,
+        },
+    )
+    .expect("prune mbtiles");
+
+    let report = inspect_mbtiles(&output).expect("inspect output");
+    assert_eq!(report.overall.tile_count, 0);
 }

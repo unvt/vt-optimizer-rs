@@ -185,6 +185,9 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub write_cache_mb: Option<u64>,
 
+    #[arg(long, default_value_t = false)]
+    pub drop_empty_tiles: bool,
+
     #[arg(long)]
     pub checkpoint: Option<PathBuf>,
 

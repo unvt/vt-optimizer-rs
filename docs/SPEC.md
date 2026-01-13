@@ -634,6 +634,7 @@ vt-optimizer -m <mbtiles> [-s <style.json>] [-o <output>] [-z <z> -x <x> -y <y> 
 * `--io-batch <n>`: 読み取り/処理キューの上限（タイル件数）
 * `--read-cache-mb <mb>`: 読み取り側 SQLite cache サイズ（MB）
 * `--write-cache-mb <mb>`: 書き込み側 SQLite cache サイズ（MB）
+* `--drop-empty-tiles`: prune 後に空タイルを出力しない（サイズ削減優先）
 * `--checkpoint <path>`: sidecar 状態ファイル（JSON/SQLite）
 * `--resume`: checkpoint があれば再開
 * `--log <level>`: `error|warn|info|debug|trace`

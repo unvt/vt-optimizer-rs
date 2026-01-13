@@ -455,6 +455,11 @@ fn encode_geometry(geometry: &Geometry<f32>) -> Result<GeomData> {
     }
 }
 
+pub(crate) struct PrunedTile {
+    pub bytes: Vec<u8>,
+    pub empty: bool,
+}
+
 pub(crate) fn prune_tile_layers(
     payload: &[u8],
     zoom: u8,
@@ -462,7 +467,7 @@ pub(crate) fn prune_tile_layers(
     keep_layers: &HashSet<String>,
     apply_filters: bool,
     stats: &mut PruneStats,
-) -> Result<Vec<u8>> {
+) -> Result<PrunedTile> {
     let reader = Reader::new(payload.to_vec())
         .map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
     let layers = reader
@@ -478,6 +483,7 @@ pub(crate) fn prune_tile_layers(
     }
 
     let mut tile = Tile::new(extent);
+    let mut kept_layers = 0u32;
     for layer in layers {
         if !keep_layers.contains(&layer.name) {
             stats.record_removed_layer(&layer.name, zoom);
@@ -555,10 +561,16 @@ pub(crate) fn prune_tile_layers(
         }
         tile.add_layer(layer_builder)
             .map_err(|err| anyhow::anyhow!("add layer: {err}"))?;
+        kept_layers += 1;
     }
 
-    tile.to_bytes()
-        .map_err(|err| anyhow::anyhow!("encode vector tile: {err}"))
+    let bytes = tile
+        .to_bytes()
+        .map_err(|err| anyhow::anyhow!("encode vector tile: {err}"))?;
+    Ok(PrunedTile {
+        bytes,
+        empty: kept_layers == 0,
+    })
 }
 
 pub(crate) fn simplify_tile_payload(
@@ -2227,6 +2239,7 @@ pub struct PruneOptions {
     pub readers: usize,
     pub read_cache_mb: Option<u64>,
     pub write_cache_mb: Option<u64>,
+    pub drop_empty_tiles: bool,
 }
 
 pub fn prune_mbtiles_layer_only(
@@ -2280,6 +2293,7 @@ pub fn prune_mbtiles_layer_only(
         let tx_out = tx_out.clone();
         let keep_layers = keep_layers.clone();
         let style = style.clone();
+        let drop_empty_tiles = options.drop_empty_tiles;
         worker_handles.push(thread::spawn(move || -> Result<PruneStats> {
             let mut stats = PruneStats::default();
             while let Ok(tile) = rx_in.recv() {
@@ -2293,7 +2307,10 @@ pub fn prune_mbtiles_layer_only(
                     apply_filters,
                     &mut stats,
                 )?;
-                let tile_data = encode_tile_payload(&encoded, is_gzip)?;
+                if encoded.empty && drop_empty_tiles {
+                    continue;
+                }
+                let tile_data = encode_tile_payload(&encoded.bytes, is_gzip)?;
                 let output = if tile.map_images {
                     let tile_id = format!("{}-{}-{}", tile.zoom, tile.x, tile.y);
                     TileOutput::MapImages {

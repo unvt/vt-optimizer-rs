@@ -77,26 +77,68 @@ jobs:
               return;
             }
 
-            const { data: commits } = await github.rest.repos.compareCommits({
-              owner,
-              repo,
-              base,
-              head: 'main',
-              per_page: 100,
-            });
-
             const prMap = new Map();
-            for (const commit of commits.commits || []) {
-              const { data: assoc } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                owner,
-                repo,
-                commit_sha: commit.sha,
-              });
-              for (const pr of assoc) {
+
+            async function addPrByNumber(number) {
+              if (prMap.has(number)) return;
+              try {
+                const { data: pr } = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: number,
+                });
                 if (pr.merged_at && pr.base && pr.base.ref === 'main') {
                   prMap.set(pr.number, pr);
                 }
+              } catch (error) {
+                core.warning(`Failed to fetch PR #${number}: ${error.message}`);
               }
+            }
+
+            async function collectPrsFromCommits(commits) {
+              for (const commit of commits || []) {
+                try {
+                  const { data: assoc } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                    owner,
+                    repo,
+                    commit_sha: commit.sha,
+                  });
+                  for (const pr of assoc) {
+                    if (pr.merged_at && pr.base && pr.base.ref === 'main') {
+                      prMap.set(pr.number, pr);
+                    }
+                  }
+                } catch (error) {
+                  core.warning(`Failed to list PRs for commit ${commit.sha}: ${error.message}`);
+                }
+
+                const message = commit.commit && commit.commit.message ? commit.commit.message : '';
+                const matches = message.match(/\(#(\d+)\)/g) || [];
+                for (const match of matches) {
+                  const number = parseInt(match.replace(/\D/g, ''), 10);
+                  if (!Number.isNaN(number)) {
+                    await addPrByNumber(number);
+                  }
+                }
+              }
+            }
+
+            let page = 1;
+            const perPage = 100;
+            while (true) {
+              const { data: comparison } = await github.rest.repos.compareCommits({
+                owner,
+                repo,
+                base,
+                head: 'main',
+                per_page: perPage,
+                page,
+              });
+              await collectPrsFromCommits(comparison.commits);
+              if (!comparison.commits || comparison.commits.length < perPage) {
+                break;
+              }
+              page += 1;
             }
 
             const prList = Array.from(prMap.values()).sort((a, b) => a.number - b.number);

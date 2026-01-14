@@ -69,9 +69,11 @@ fn format_zoom_table_sorts_and_labels() {
         zoom_stats(5, 10, 50_000, 10_000, 5_000),
         zoom_stats(2, 3, 3_000, 1_200, 1_000),
     ];
-    let lines = format_zoom_table(&stats);
+    let lines = format_zoom_table(&stats, 20, 100_000);
     let header = lines.first().expect("missing header");
-    assert!(header.contains("tiles"));
+    assert!(header.contains("zoom"));
+    assert!(header.contains("%tiles"));
+    assert!(header.contains("%size"));
     let z2_index = lines
         .iter()
         .position(|line| line.trim_start().starts_with('2'))

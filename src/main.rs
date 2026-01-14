@@ -464,7 +464,11 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
             if include_zoom && !report.by_zoom.is_empty() {
                 println!();
                 println!("{}", emphasize_section_heading("## Zoom"));
-                for line in format_zoom_table(&report.by_zoom) {
+                for line in format_zoom_table(
+                    &report.by_zoom,
+                    report.overall.tile_count,
+                    report.overall.total_bytes,
+                ) {
                     println!("{}", emphasize_table_header(&line));
                 }
             }
@@ -757,7 +761,7 @@ fn format_summary_parts(parts: Vec<(&str, String)>) -> String {
 
 fn emphasize_table_header(line: &str) -> String {
     if line.trim_start().starts_with("range")
-        || line.trim_start().starts_with("z")
+        || line.trim_start().starts_with("zoom")
         || line.trim_start().starts_with("name")
         || line.trim_start().starts_with("# of")
     {

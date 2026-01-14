@@ -374,9 +374,7 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
             }
         }
         ReportFormat::Text => {
-            if !args.no_progress {
-                eprintln!();
-            }
+            println!();
             let include_metadata =
                 stats_filter.includes(vt_optimizer::output::StatsSection::Metadata);
             let include_summary =

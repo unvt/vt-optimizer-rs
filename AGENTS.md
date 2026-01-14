@@ -10,4 +10,5 @@
 - Use PRs for `main` (direct push is blocked); `release` is the promotion branch.
 - Direct pushes to `main` are blocked.
 - Always use `.github/PULL_REQUEST_TEMPLATE.md` when creating pull requests.
+- When asked to bump versions, follow `docs/RELEASE.md`.
 - Release flow: `main` → `release` PRs are auto-created/updated; tags are created by workflow on `release` merges and releases are dispatched automatically.

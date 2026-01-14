@@ -484,8 +484,9 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
                     println!("{}", emphasize_table_header(&line));
                 }
                 if args.zoom.is_none() {
+                    println!();
                     println!(
-                        "Tip: use --zoom option to see histogram and layers by each zoom level."
+                        "Tip: use --zoom option to inspect histogram and layers by each zoom level."
                     );
                 }
             }

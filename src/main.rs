@@ -408,28 +408,54 @@ fn run_inspect(args: vt_optimizer::cli::InspectArgs) -> Result<()> {
             if include_summary {
                 println!("{}", emphasize_section_heading("## Summary"));
                 println!(
-                    "- tiles: {} total: {} max: {} avg: {}",
-                    report.overall.tile_count,
-                    format_bytes(report.overall.total_bytes),
-                    format_bytes(report.overall.max_bytes),
-                    format_bytes(report.overall.avg_bytes)
+                    "{}",
+                    format_summary_parts(vec![
+                        ("tiles", report.overall.tile_count.to_string()),
+                        ("total", format_bytes(report.overall.total_bytes)),
+                        ("max", format_bytes(report.overall.max_bytes)),
+                        ("avg", format_bytes(report.overall.avg_bytes)),
+                    ])
                 );
                 println!(
-                    "- empty_tiles: {} empty_ratio: {:.4}",
-                    report.empty_tiles, report.empty_ratio
+                    "{}",
+                    format_summary_parts(vec![
+                        ("empty_tiles", report.empty_tiles.to_string()),
+                        ("empty_ratio", format!("{:.4}", report.empty_ratio)),
+                    ])
                 );
                 if report.sampled {
                     println!(
-                        "- sample: used={} total={}",
-                        report.sample_used_tiles, report.sample_total_tiles
+                        "{}",
+                        format_summary_label(
+                            "sample",
+                            format!(
+                                "used={} total={}",
+                                report.sample_used_tiles, report.sample_total_tiles
+                            )
+                        )
                     );
                 }
                 if let Some(totals) = summary_totals {
-                    println!("- Layers in this tile: {}", totals.layer_count);
-                    println!("- Features in this tile: {}", totals.feature_count);
-                    println!("- Vertices in this tile: {}", totals.vertex_count);
-                    println!("- Keys in this tile: {}", totals.property_key_count);
-                    println!("- Values in this tile: {}", totals.property_value_count);
+                    println!(
+                        "{}",
+                        format_summary_label("Layers in this tile", totals.layer_count)
+                    );
+                    println!(
+                        "{}",
+                        format_summary_label("Features in this tile", totals.feature_count)
+                    );
+                    println!(
+                        "{}",
+                        format_summary_label("Vertices in this tile", totals.vertex_count)
+                    );
+                    println!(
+                        "{}",
+                        format_summary_label("Keys in this tile", totals.property_key_count)
+                    );
+                    println!(
+                        "{}",
+                        format_summary_label("Values in this tile", totals.property_value_count)
+                    );
                 }
             }
             if include_zoom && !report.by_zoom.is_empty() {
@@ -710,6 +736,25 @@ fn format_inspect_title(path: &std::path::Path) -> String {
         underline.paint(path_text),
         base.paint(suffix)
     )
+}
+
+fn format_summary_label<T: std::fmt::Display>(label: &str, value: T) -> String {
+    format!("- {}: {}", Style::new().fg(Color::Blue).paint(label), value)
+}
+
+fn format_summary_parts(parts: Vec<(&str, String)>) -> String {
+    let mut line = String::from("- ");
+    for (idx, (label, value)) in parts.into_iter().enumerate() {
+        if idx > 0 {
+            line.push(' ');
+        }
+        line.push_str(&format!(
+            "{}: {}",
+            Style::new().fg(Color::Blue).paint(label),
+            value
+        ));
+    }
+    line
 }
 
 fn emphasize_table_header(line: &str) -> String {

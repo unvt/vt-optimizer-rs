@@ -76,20 +76,6 @@ fn parse_optimize_style_modes() {
         "optimize",
         "in.mbtiles",
         "--style-mode",
-        "none",
-    ]);
-    match cli.command {
-        Some(Command::Optimize(args)) => {
-            assert_eq!(args.style_mode, StyleMode::None);
-        }
-        _ => panic!("expected optimize command"),
-    }
-
-    let cli = Cli::parse_from([
-        "vt-optimizer",
-        "optimize",
-        "in.mbtiles",
-        "--style-mode",
         "layer",
     ]);
     match cli.command {

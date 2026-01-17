@@ -247,7 +247,6 @@ pub struct VerifyArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum StyleMode {
-    None,
     Layer,
     #[value(name = "layer+filter")]
     LayerFilter,

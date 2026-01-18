@@ -183,6 +183,7 @@ vt-optimizer -m <mbtiles> [-s <style.json>] [-o <output>] [-z <z> -x <x> -y <y> 
 
 主要仕様：
 
+* `--report-format <text|json|ndjson>`: optimize のレポート出力形式（stdout）
 * レイヤー削除
 
   * style で参照されない `source-layer` は削除対象

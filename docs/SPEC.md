@@ -184,6 +184,8 @@ vt-optimizer -m <mbtiles> [-s <style.json>] [-o <output>] [-z <z> -x <x> -y <y> 
 主要仕様：
 
 * `--report-format <text|json|ndjson>`: optimize のレポート出力形式（stdout）
+  * json/ndjson では input/output の tile_count / total_tile_size_bytes / file_size_bytes /
+    total_features / total_vertices と、最適化の差分サマリーを出力する
 * レイヤー削除
 
   * style で参照されない `source-layer` は削除対象

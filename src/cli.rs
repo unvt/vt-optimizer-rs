@@ -169,6 +169,10 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub output_format: Option<String>,
 
+    /// Report format (text/json/ndjson).
+    #[arg(long = "report-format", value_enum, default_value_t = ReportFormat::Text)]
+    pub report_format: ReportFormat,
+
     #[arg(long)]
     pub style: Option<PathBuf>,
 

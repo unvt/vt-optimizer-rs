@@ -9,10 +9,10 @@ The format is based on Keep a Changelog and adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
-- TBD_UNVT_CHANGELOG_ADDED
+- Add before/after metrics to optimize reports (tile size, file size, features, vertices).
 
 ### Changed
-- TBD_UNVT_CHANGELOG_CHANGED
+- Add colored headings/labels and before/after deltas to optimize text summary.
 
 ### Fixed
 - TBD_UNVT_CHANGELOG_FIXED

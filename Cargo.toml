@@ -45,6 +45,7 @@ mvt = "0.10.3"
 protobuf = "3.7"
 geo-types = "0.7"
 crossbeam-channel = "0.5"
+rayon = "1"
 
 [dev-dependencies]
 

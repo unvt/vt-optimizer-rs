@@ -16,6 +16,7 @@ use geo_types::{
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use mvt::{GeomData, GeomEncoder, GeomType, Tile};
 use mvt_reader::Reader;
+use rayon::prelude::*;
 use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;
 use tracing::warn;
@@ -851,6 +852,17 @@ struct LayerAccum {
     property_values: HashSet<String>,
 }
 
+impl LayerAccum {
+    fn new() -> Self {
+        Self {
+            feature_count: 0,
+            vertex_count: 0,
+            property_keys: HashSet::new(),
+            property_values: HashSet::new(),
+        }
+    }
+}
+
 fn build_file_layer_list(
     conn: &Connection,
     sample: Option<&SampleSpec>,
@@ -869,7 +881,7 @@ fn build_file_layer_list(
     let mut rows = stmt.query([]).context("query layer list scan")?;
 
     let mut index: u64 = 0;
-    let mut map: BTreeMap<String, LayerAccum> = BTreeMap::new();
+    let mut tiles: Vec<(u8, Vec<u8>)> = Vec::new();
 
     while let Some(row) = rows.next().context("read layer list row")? {
         let row_zoom: u8 = row.get(0)?;
@@ -883,33 +895,7 @@ fn build_file_layer_list(
             continue;
         }
         let data: Vec<u8> = row.get(1)?;
-        let payload = decode_tile_payload(&data)?;
-        let reader =
-            Reader::new(payload).map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
-        let layers = reader
-            .get_layer_metadata()
-            .map_err(|err| anyhow::anyhow!("read layer metadata: {err}"))?;
-        for layer in layers {
-            let entry = map.entry(layer.name.clone()).or_insert_with(|| LayerAccum {
-                feature_count: 0,
-                vertex_count: 0,
-                property_keys: HashSet::new(),
-                property_values: HashSet::new(),
-            });
-            entry.feature_count += layer.feature_count as u64;
-            let features = reader
-                .get_features(layer.layer_index)
-                .map_err(|err| anyhow::anyhow!("read layer features: {err}"))?;
-            for feature in features {
-                entry.vertex_count += count_vertices(&feature.geometry) as u64;
-                if let Some(props) = feature.properties {
-                    for (key, value) in props {
-                        entry.property_keys.insert(key.clone());
-                        entry.property_values.insert(format_property_value(&value));
-                    }
-                }
-            }
-        }
+        tiles.push((row_zoom, data));
 
         if let Some(SampleSpec::Count(limit)) = sample
             && index >= *limit
@@ -917,6 +903,54 @@ fn build_file_layer_list(
             break;
         }
     }
+
+    let map = tiles
+        .into_par_iter()
+        .map(
+            |(_row_zoom, data)| -> Result<BTreeMap<String, LayerAccum>> {
+                let payload = decode_tile_payload(&data)?;
+                let reader = Reader::new(payload)
+                    .map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
+                let layers = reader
+                    .get_layer_metadata()
+                    .map_err(|err| anyhow::anyhow!("read layer metadata: {err}"))?;
+                let mut local = BTreeMap::new();
+                for layer in layers {
+                    let entry = local
+                        .entry(layer.name.clone())
+                        .or_insert_with(LayerAccum::new);
+                    entry.feature_count += layer.feature_count as u64;
+                    let features = reader
+                        .get_features(layer.layer_index)
+                        .map_err(|err| anyhow::anyhow!("read layer features: {err}"))?;
+                    for feature in features {
+                        entry.vertex_count += count_vertices(&feature.geometry) as u64;
+                        if let Some(props) = feature.properties {
+                            for (key, value) in props {
+                                entry.property_keys.insert(key);
+                                entry.property_values.insert(format_property_value(&value));
+                            }
+                        }
+                    }
+                }
+                Ok(local)
+            },
+        )
+        .reduce(
+            || Ok(BTreeMap::new()),
+            |left, right| -> Result<BTreeMap<String, LayerAccum>> {
+                let mut left = left?;
+                let right = right?;
+                for (name, accum) in right {
+                    let entry = left.entry(name).or_insert_with(LayerAccum::new);
+                    entry.feature_count += accum.feature_count;
+                    entry.vertex_count += accum.vertex_count;
+                    entry.property_keys.extend(accum.property_keys);
+                    entry.property_values.extend(accum.property_values);
+                }
+                Ok(left)
+            },
+        )?;
 
     let mut result = map
         .into_iter()

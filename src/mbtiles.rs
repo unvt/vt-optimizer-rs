@@ -16,6 +16,7 @@ use geo_types::{
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use mvt::{GeomData, GeomEncoder, GeomType, Tile};
 use mvt_reader::Reader;
+use rayon::prelude::*;
 use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;
 use tracing::warn;
@@ -851,11 +852,23 @@ struct LayerAccum {
     property_values: HashSet<String>,
 }
 
+impl LayerAccum {
+    fn new() -> Self {
+        Self {
+            feature_count: 0,
+            vertex_count: 0,
+            property_keys: HashSet::new(),
+            property_values: HashSet::new(),
+        }
+    }
+}
+
 fn build_file_layer_list(
     conn: &Connection,
     sample: Option<&SampleSpec>,
     total_tiles: u64,
     zoom: Option<u8>,
+    no_progress: bool,
 ) -> Result<Vec<FileLayerSummary>> {
     let data_expr = tiles_data_expr(conn)?;
     let source = tiles_source_clause(conn)?;
@@ -869,7 +882,25 @@ fn build_file_layer_list(
     let mut rows = stmt.query([]).context("query layer list scan")?;
 
     let mut index: u64 = 0;
-    let mut map: BTreeMap<String, LayerAccum> = BTreeMap::new();
+    let mut tiles: Vec<Vec<u8>> = Vec::new();
+    let read_progress = if no_progress {
+        ProgressBar::hidden()
+    } else if total_tiles > 0 {
+        let bar = make_progress_bar(total_tiles);
+        bar.set_message("reading layers");
+        bar
+    } else {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_draw_target(ProgressDrawTarget::stderr_with_hz(20));
+        spinner.set_style(
+            ProgressStyle::with_template("[{elapsed_precise}] {spinner:.cyan} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        spinner.set_message("reading layers");
+        spinner.enable_steady_tick(Duration::from_millis(80));
+        spinner
+    };
 
     while let Some(row) = rows.next().context("read layer list row")? {
         let row_zoom: u8 = row.get(0)?;
@@ -883,40 +914,81 @@ fn build_file_layer_list(
             continue;
         }
         let data: Vec<u8> = row.get(1)?;
-        let payload = decode_tile_payload(&data)?;
-        let reader =
-            Reader::new(payload).map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
-        let layers = reader
-            .get_layer_metadata()
-            .map_err(|err| anyhow::anyhow!("read layer metadata: {err}"))?;
-        for layer in layers {
-            let entry = map.entry(layer.name.clone()).or_insert_with(|| LayerAccum {
-                feature_count: 0,
-                vertex_count: 0,
-                property_keys: HashSet::new(),
-                property_values: HashSet::new(),
-            });
-            entry.feature_count += layer.feature_count as u64;
-            let features = reader
-                .get_features(layer.layer_index)
-                .map_err(|err| anyhow::anyhow!("read layer features: {err}"))?;
-            for feature in features {
-                entry.vertex_count += count_vertices(&feature.geometry) as u64;
-                if let Some(props) = feature.properties {
-                    for (key, value) in props {
-                        entry.property_keys.insert(key.clone());
-                        entry.property_values.insert(format_property_value(&value));
-                    }
-                }
-            }
-        }
+        tiles.push(data);
 
         if let Some(SampleSpec::Count(limit)) = sample
             && index >= *limit
         {
             break;
         }
+
+        if index == 1 || index.is_multiple_of(100) {
+            read_progress.set_position(index);
+        }
     }
+
+    read_progress.set_position(index);
+    read_progress.finish();
+
+    let processing = if no_progress {
+        ProgressBar::hidden()
+    } else {
+        let bar = make_progress_bar(tiles.len() as u64);
+        bar.set_message("processing layers");
+        bar
+    };
+
+    let map = tiles
+        .into_par_iter()
+        .map(|data| {
+            let result = (|| -> Result<BTreeMap<String, LayerAccum>> {
+                let payload = decode_tile_payload(&data)?;
+                let reader = Reader::new(payload)
+                    .map_err(|err| anyhow::anyhow!("decode vector tile: {err}"))?;
+                let layers = reader
+                    .get_layer_metadata()
+                    .map_err(|err| anyhow::anyhow!("read layer metadata: {err}"))?;
+                let mut local = BTreeMap::new();
+                for layer in layers {
+                    let entry = local
+                        .entry(layer.name.clone())
+                        .or_insert_with(LayerAccum::new);
+                    entry.feature_count += layer.feature_count as u64;
+                    let features = reader
+                        .get_features(layer.layer_index)
+                        .map_err(|err| anyhow::anyhow!("read layer features: {err}"))?;
+                    for feature in features {
+                        entry.vertex_count += count_vertices(&feature.geometry) as u64;
+                        if let Some(props) = feature.properties {
+                            for (key, value) in props {
+                                entry.property_keys.insert(key);
+                                entry.property_values.insert(format_property_value(&value));
+                            }
+                        }
+                    }
+                }
+                Ok(local)
+            })();
+            processing.inc(1);
+            result
+        })
+        .reduce(
+            || Ok(BTreeMap::new()),
+            |left, right| -> Result<BTreeMap<String, LayerAccum>> {
+                let mut left = left?;
+                let right = right?;
+                for (name, accum) in right {
+                    let entry = left.entry(name).or_insert_with(LayerAccum::new);
+                    entry.feature_count += accum.feature_count;
+                    entry.vertex_count += accum.vertex_count;
+                    entry.property_keys.extend(accum.property_keys);
+                    entry.property_values.extend(accum.property_values);
+                }
+                Ok(left)
+            },
+        )?;
+
+    processing.finish();
 
     let mut result = map
         .into_iter()
@@ -1499,19 +1571,6 @@ fn make_progress_bar(total: u64) -> ProgressBar {
     bar
 }
 
-fn make_spinner(message: &str) -> ProgressBar {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_draw_target(ProgressDrawTarget::stderr_with_hz(20));
-    spinner.set_style(
-        ProgressStyle::with_template("{spinner:.cyan} {msg}")
-            .unwrap()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
-    spinner.set_message(message.to_string());
-    spinner.enable_steady_tick(Duration::from_millis(80));
-    spinner
-}
-
 pub fn inspect_mbtiles(path: &Path) -> Result<MbtilesReport> {
     inspect_mbtiles_with_options(path, InspectOptions::default())
 }
@@ -1786,17 +1845,13 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
         result.sort_by(|a, b| a.name.cmp(&b.name));
         result
     } else if options.include_layer_list && options.sample.is_none() {
-        let spinner = if options.no_progress {
-            None
-        } else {
-            Some(make_spinner("processing layers"))
-        };
-        let result =
-            build_file_layer_list(&conn, options.sample.as_ref(), total_tiles, options.zoom)?;
-        if let Some(spinner) = spinner {
-            spinner.finish_and_clear();
-        }
-        result
+        build_file_layer_list(
+            &conn,
+            options.sample.as_ref(),
+            total_tiles,
+            options.zoom,
+            options.no_progress,
+        )?
     } else {
         Vec::new()
     };

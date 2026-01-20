@@ -1229,10 +1229,9 @@ fn build_histogram(
 
     let range = (max_len - min_len).max(1);
     let bucket_size = ((range as f64) / buckets as f64).ceil() as u64;
-    let mut counts = vec![0u64; buckets];
-    let mut bytes = vec![0u64; buckets];
-
+    let mut tiles: Vec<(u8, u64)> = Vec::new();
     let mut index: u64 = 0;
+    let mut used: u64 = 0;
     while let Some(row) = rows.next().context("read histogram row")? {
         let row_zoom: u8 = row.get(0)?;
         let length: i64 = row.get(1)?;
@@ -1246,15 +1245,11 @@ fn build_histogram(
         if !include_sample(index, total_tiles_db, sample) {
             continue;
         }
-        let mut bucket = ((length.saturating_sub(min_len)) / bucket_size) as usize;
-        if bucket >= buckets {
-            bucket = buckets - 1;
-        }
-        counts[bucket] += 1;
-        bytes[bucket] += length;
+        used += 1;
+        tiles.push((row_zoom, length));
 
         if let Some(SampleSpec::Count(limit)) = sample
-            && counts.iter().sum::<u64>() >= *limit
+            && used >= *limit
         {
             break;
         }
@@ -1266,6 +1261,31 @@ fn build_histogram(
 
     progress.set_position(index);
     progress.finish();
+
+    let (counts, bytes) = tiles
+        .into_par_iter()
+        .fold(
+            || (vec![0u64; buckets], vec![0u64; buckets]),
+            |mut acc, (_zoom, length)| {
+                let mut bucket = ((length.saturating_sub(min_len)) / bucket_size) as usize;
+                if bucket >= buckets {
+                    bucket = buckets - 1;
+                }
+                acc.0[bucket] += 1;
+                acc.1[bucket] += length;
+                acc
+            },
+        )
+        .reduce(
+            || (vec![0u64; buckets], vec![0u64; buckets]),
+            |mut left, right| {
+                for i in 0..buckets {
+                    left.0[i] += right.0[i];
+                    left.1[i] += right.1[i];
+                }
+                left
+            },
+        );
 
     let mut result = Vec::with_capacity(buckets);
     let mut accum_count = 0u64;
@@ -1354,64 +1374,55 @@ fn build_zoom_histograms(
         .context("prepare zoom histogram scan")?;
     let mut rows = stmt.query([]).context("query zoom histogram scan")?;
 
+    #[derive(Clone, Copy)]
+    struct ZoomConfig {
+        min_len: u64,
+        max_len: u64,
+        bucket_size: u64,
+    }
+
     struct ZoomAccum {
         min_len: u64,
         max_len: u64,
         bucket_size: u64,
         counts: Vec<u64>,
         bytes: Vec<u64>,
-        index: u64,
         used_tiles: u64,
         used_bytes: u64,
     }
 
-    let mut accums: BTreeMap<u8, ZoomAccum> = BTreeMap::new();
+    let mut configs: BTreeMap<u8, ZoomConfig> = BTreeMap::new();
     for (zoom, (min_len, max_len)) in zoom_minmax.iter() {
         let range = (max_len - min_len).max(1);
         let bucket_size = ((range as f64) / buckets as f64).ceil() as u64;
-        accums.insert(
+        configs.insert(
             *zoom,
-            ZoomAccum {
+            ZoomConfig {
                 min_len: *min_len,
                 max_len: *max_len,
                 bucket_size,
-                counts: vec![0u64; buckets],
-                bytes: vec![0u64; buckets],
-                index: 0,
-                used_tiles: 0,
-                used_bytes: 0,
             },
         );
     }
 
     let mut total_index: u64 = 0;
+    let mut per_zoom_index: BTreeMap<u8, u64> = BTreeMap::new();
+    let mut tiles: Vec<(u8, u64)> = Vec::new();
     while let Some(row) = rows.next().context("read zoom histogram row")? {
         let zoom: u8 = row.get(0)?;
         let length: i64 = row.get(1)?;
         let length = u64::try_from(length).context("tile length must be non-negative")?;
         total_index += 1;
-        let Some(accum) = accums.get_mut(&zoom) else {
+        if !configs.contains_key(&zoom) {
             continue;
-        };
-        accum.index += 1;
+        }
+        let index = per_zoom_index.entry(zoom).or_insert(0);
+        *index += 1;
         let total_tiles_db = *zoom_counts.get(&zoom).unwrap_or(&0);
-        if !include_sample(accum.index, total_tiles_db, sample) {
+        if !include_sample(*index, total_tiles_db, sample) {
             continue;
         }
-        let mut bucket = ((length.saturating_sub(accum.min_len)) / accum.bucket_size) as usize;
-        if bucket >= buckets {
-            bucket = buckets - 1;
-        }
-        accum.counts[bucket] += 1;
-        accum.bytes[bucket] += length;
-        accum.used_tiles += 1;
-        accum.used_bytes += length;
-
-        if let Some(SampleSpec::Count(limit)) = sample
-            && accum.used_tiles >= *limit
-        {
-            // keep scanning other zooms; no-op for this zoom
-        }
+        tiles.push((zoom, length));
 
         if total_index == 1 || total_index.is_multiple_of(1000) {
             progress.set_position(total_index);
@@ -1420,6 +1431,50 @@ fn build_zoom_histograms(
 
     progress.set_position(total_index);
     progress.finish();
+
+    let accums = tiles
+        .into_par_iter()
+        .fold(BTreeMap::new, |mut local, (zoom, length)| {
+            let config = configs.get(&zoom).expect("zoom histogram config missing");
+            let entry = local.entry(zoom).or_insert_with(|| ZoomAccum {
+                min_len: config.min_len,
+                max_len: config.max_len,
+                bucket_size: config.bucket_size,
+                counts: vec![0u64; buckets],
+                bytes: vec![0u64; buckets],
+                used_tiles: 0,
+                used_bytes: 0,
+            });
+            let mut bucket = ((length.saturating_sub(entry.min_len)) / entry.bucket_size) as usize;
+            if bucket >= buckets {
+                bucket = buckets - 1;
+            }
+            entry.counts[bucket] += 1;
+            entry.bytes[bucket] += length;
+            entry.used_tiles += 1;
+            entry.used_bytes += length;
+            local
+        })
+        .reduce(BTreeMap::new, |mut left, right| {
+            for (zoom, accum) in right {
+                let entry = left.entry(zoom).or_insert_with(|| ZoomAccum {
+                    min_len: accum.min_len,
+                    max_len: accum.max_len,
+                    bucket_size: accum.bucket_size,
+                    counts: vec![0u64; buckets],
+                    bytes: vec![0u64; buckets],
+                    used_tiles: 0,
+                    used_bytes: 0,
+                });
+                for i in 0..buckets {
+                    entry.counts[i] += accum.counts[i];
+                    entry.bytes[i] += accum.bytes[i];
+                }
+                entry.used_tiles += accum.used_tiles;
+                entry.used_bytes += accum.used_bytes;
+            }
+            left
+        });
 
     let mut result = Vec::new();
     for (zoom, accum) in accums.into_iter() {

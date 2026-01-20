@@ -2,6 +2,8 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet};
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -1223,69 +1225,83 @@ fn build_histogram(
         bar.set_message("building histogram");
         bar
     };
-    let query = select_zoom_length_query(&conn)?;
-    let mut stmt = conn.prepare(&query).context("prepare histogram scan")?;
-    let mut rows = stmt.query([]).context("query histogram scan")?;
-
     let range = (max_len - min_len).max(1);
     let bucket_size = ((range as f64) / buckets as f64).ceil() as u64;
-    let mut tiles: Vec<(u8, u64)> = Vec::new();
-    let mut index: u64 = 0;
-    let mut used: u64 = 0;
-    while let Some(row) = rows.next().context("read histogram row")? {
-        let row_zoom: u8 = row.get(0)?;
-        let length: i64 = row.get(1)?;
-        let length = u64::try_from(length).context("tile length must be non-negative")?;
-        if let Some(target) = zoom
-            && row_zoom != target
-        {
-            continue;
-        }
-        index += 1;
-        if !include_sample(index, total_tiles_db, sample) {
-            continue;
-        }
-        used += 1;
-        tiles.push((row_zoom, length));
+    let query = select_zoom_length_by_zoom_query(&conn)?;
+    let zoom_counts = fetch_zoom_counts(&conn)?;
+    let zooms = if let Some(target) = zoom {
+        vec![target]
+    } else {
+        zoom_counts.keys().copied().collect::<Vec<_>>()
+    };
+    let processed = Arc::new(AtomicU64::new(0));
+    let progress = progress.clone();
 
-        if let Some(SampleSpec::Count(limit)) = sample
-            && used >= *limit
-        {
-            break;
-        }
-
-        if index == 1 || index.is_multiple_of(1000) {
-            progress.set_position(index);
-        }
-    }
-
-    progress.set_position(index);
-    progress.finish();
-
-    let (counts, bytes) = tiles
+    let (counts, bytes) = zooms
         .into_par_iter()
-        .fold(
-            || (vec![0u64; buckets], vec![0u64; buckets]),
-            |mut acc, (_zoom, length)| {
+        .map(|zoom| -> Result<(Vec<u64>, Vec<u64>)> {
+            let conn = open_readonly_mbtiles(path)?;
+            apply_read_pragmas(&conn)?;
+            let mut stmt = conn.prepare(&query).context("prepare histogram scan")?;
+            let mut rows = stmt.query([zoom]).context("query histogram scan")?;
+
+            let total_tiles_db = *zoom_counts.get(&zoom).unwrap_or(&0);
+            let mut index: u64 = 0;
+            let mut used: u64 = 0;
+            let mut local_counts = vec![0u64; buckets];
+            let mut local_bytes = vec![0u64; buckets];
+            let mut batch: u64 = 0;
+
+            while let Some(row) = rows.next().context("read histogram row")? {
+                let length: i64 = row.get(0)?;
+                let length = u64::try_from(length).context("tile length must be non-negative")?;
+                index += 1;
+                batch += 1;
+                if batch >= 1000 {
+                    let total = processed.fetch_add(batch, Ordering::Relaxed) + batch;
+                    progress.set_position(total);
+                    batch = 0;
+                }
+
+                if !include_sample(index, total_tiles_db, sample) {
+                    continue;
+                }
+                used += 1;
                 let mut bucket = ((length.saturating_sub(min_len)) / bucket_size) as usize;
                 if bucket >= buckets {
                     bucket = buckets - 1;
                 }
-                acc.0[bucket] += 1;
-                acc.1[bucket] += length;
-                acc
-            },
-        )
+                local_counts[bucket] += 1;
+                local_bytes[bucket] += length;
+
+                if let Some(SampleSpec::Count(limit)) = sample
+                    && used >= *limit
+                {
+                    break;
+                }
+            }
+
+            if batch > 0 {
+                let total = processed.fetch_add(batch, Ordering::Relaxed) + batch;
+                progress.set_position(total);
+            }
+
+            Ok((local_counts, local_bytes))
+        })
         .reduce(
-            || (vec![0u64; buckets], vec![0u64; buckets]),
-            |mut left, right| {
+            || Ok((vec![0u64; buckets], vec![0u64; buckets])),
+            |left, right| -> Result<(Vec<u64>, Vec<u64>)> {
+                let mut left = left?;
+                let right = right?;
                 for i in 0..buckets {
                     left.0[i] += right.0[i];
                     left.1[i] += right.1[i];
                 }
-                left
+                Ok(left)
             },
-        );
+        )?;
+
+    progress.finish();
 
     let mut result = Vec::with_capacity(buckets);
     let mut accum_count = 0u64;
@@ -1368,11 +1384,7 @@ fn build_zoom_histograms(
         bar.set_message("building zoom histograms");
         bar
     };
-    let query = select_zoom_length_query(&conn)?;
-    let mut stmt = conn
-        .prepare(&query)
-        .context("prepare zoom histogram scan")?;
-    let mut rows = stmt.query([]).context("query zoom histogram scan")?;
+    let query = select_zoom_length_by_zoom_query(&conn)?;
 
     #[derive(Clone, Copy)]
     struct ZoomConfig {
@@ -1405,38 +1417,22 @@ fn build_zoom_histograms(
         );
     }
 
-    let mut total_index: u64 = 0;
-    let mut per_zoom_index: BTreeMap<u8, u64> = BTreeMap::new();
-    let mut tiles: Vec<(u8, u64)> = Vec::new();
-    while let Some(row) = rows.next().context("read zoom histogram row")? {
-        let zoom: u8 = row.get(0)?;
-        let length: i64 = row.get(1)?;
-        let length = u64::try_from(length).context("tile length must be non-negative")?;
-        total_index += 1;
-        if !configs.contains_key(&zoom) {
-            continue;
-        }
-        let index = per_zoom_index.entry(zoom).or_insert(0);
-        *index += 1;
-        let total_tiles_db = *zoom_counts.get(&zoom).unwrap_or(&0);
-        if !include_sample(*index, total_tiles_db, sample) {
-            continue;
-        }
-        tiles.push((zoom, length));
+    let zooms = configs.keys().copied().collect::<Vec<_>>();
+    let processed = Arc::new(AtomicU64::new(0));
+    let progress = progress.clone();
 
-        if total_index == 1 || total_index.is_multiple_of(1000) {
-            progress.set_position(total_index);
-        }
-    }
-
-    progress.set_position(total_index);
-    progress.finish();
-
-    let accums = tiles
+    let accums = zooms
         .into_par_iter()
-        .fold(BTreeMap::new, |mut local, (zoom, length)| {
+        .map(|zoom| -> Result<BTreeMap<u8, ZoomAccum>> {
+            let conn = open_readonly_mbtiles(path)?;
+            apply_read_pragmas(&conn)?;
+            let mut stmt = conn
+                .prepare(&query)
+                .context("prepare zoom histogram scan")?;
+            let mut rows = stmt.query([zoom]).context("query zoom histogram scan")?;
+
             let config = configs.get(&zoom).expect("zoom histogram config missing");
-            let entry = local.entry(zoom).or_insert_with(|| ZoomAccum {
+            let mut accum = ZoomAccum {
                 min_len: config.min_len,
                 max_len: config.max_len,
                 bucket_size: config.bucket_size,
@@ -1444,37 +1440,64 @@ fn build_zoom_histograms(
                 bytes: vec![0u64; buckets],
                 used_tiles: 0,
                 used_bytes: 0,
-            });
-            let mut bucket = ((length.saturating_sub(entry.min_len)) / entry.bucket_size) as usize;
-            if bucket >= buckets {
-                bucket = buckets - 1;
-            }
-            entry.counts[bucket] += 1;
-            entry.bytes[bucket] += length;
-            entry.used_tiles += 1;
-            entry.used_bytes += length;
-            local
-        })
-        .reduce(BTreeMap::new, |mut left, right| {
-            for (zoom, accum) in right {
-                let entry = left.entry(zoom).or_insert_with(|| ZoomAccum {
-                    min_len: accum.min_len,
-                    max_len: accum.max_len,
-                    bucket_size: accum.bucket_size,
-                    counts: vec![0u64; buckets],
-                    bytes: vec![0u64; buckets],
-                    used_tiles: 0,
-                    used_bytes: 0,
-                });
-                for i in 0..buckets {
-                    entry.counts[i] += accum.counts[i];
-                    entry.bytes[i] += accum.bytes[i];
+            };
+            let total_tiles_db = *zoom_counts.get(&zoom).unwrap_or(&0);
+            let mut index: u64 = 0;
+            let mut batch: u64 = 0;
+
+            while let Some(row) = rows.next().context("read zoom histogram row")? {
+                let length: i64 = row.get(0)?;
+                let length = u64::try_from(length).context("tile length must be non-negative")?;
+                index += 1;
+                batch += 1;
+                if batch >= 1000 {
+                    let total = processed.fetch_add(batch, Ordering::Relaxed) + batch;
+                    progress.set_position(total);
+                    batch = 0;
                 }
-                entry.used_tiles += accum.used_tiles;
-                entry.used_bytes += accum.used_bytes;
+
+                if !include_sample(index, total_tiles_db, sample) {
+                    continue;
+                }
+                let mut bucket =
+                    ((length.saturating_sub(accum.min_len)) / accum.bucket_size) as usize;
+                if bucket >= buckets {
+                    bucket = buckets - 1;
+                }
+                accum.counts[bucket] += 1;
+                accum.bytes[bucket] += length;
+                accum.used_tiles += 1;
+                accum.used_bytes += length;
+
+                if let Some(SampleSpec::Count(limit)) = sample
+                    && accum.used_tiles >= *limit
+                {
+                    break;
+                }
             }
-            left
-        });
+
+            if batch > 0 {
+                let total = processed.fetch_add(batch, Ordering::Relaxed) + batch;
+                progress.set_position(total);
+            }
+
+            let mut map = BTreeMap::new();
+            map.insert(zoom, accum);
+            Ok(map)
+        })
+        .reduce(
+            || Ok(BTreeMap::new()),
+            |left, right| -> Result<BTreeMap<u8, ZoomAccum>> {
+                let mut left = left?;
+                let right = right?;
+                for (zoom, accum) in right {
+                    left.insert(zoom, accum);
+                }
+                Ok(left)
+            },
+        )?;
+
+    progress.finish();
 
     let mut result = Vec::new();
     for (zoom, accum) in accums.into_iter() {
@@ -1637,13 +1660,18 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
     apply_read_pragmas(&conn)?;
     let metadata = read_metadata(&conn)?;
 
-    // When sampling, skip the expensive COUNT(*) and use an estimate
-    let (total_tiles, needs_counting) = if options.sample.is_some() {
-        // Use a rough estimate from sqlite_stat1 or just use 0 (will be determined during scan)
+    // When sampling, avoid COUNT(*) and use per-zoom counts for sampling decisions.
+    let (mut total_tiles, needs_counting) = if options.sample.is_some() {
         (0u64, false)
     } else {
         (0u64, true)
     };
+    let mut zoom_counts: Option<BTreeMap<u8, u64>> = None;
+    if options.sample.is_some() {
+        let counts = fetch_zoom_counts(&conn)?;
+        total_tiles = counts.values().sum();
+        zoom_counts = Some(counts);
+    }
 
     let spinner = if options.no_progress || !needs_counting {
         None
@@ -1719,6 +1747,28 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
     let mut over_limit_tiles: u64 = 0;
     let mut processed: u64 = 0;
     let mut used: u64 = 0;
+    let mut per_zoom_index: BTreeMap<u8, u64> = BTreeMap::new();
+    let mut per_zoom_used: BTreeMap<u8, u64> = BTreeMap::new();
+    let mut zooms_done: u64 = 0;
+    let target_zoom_count = if options.sample.is_some() {
+        if let Some(target) = options.zoom {
+            if zoom_counts
+                .as_ref()
+                .and_then(|counts| counts.get(&target))
+                .copied()
+                .unwrap_or(0)
+                > 0
+            {
+                1
+            } else {
+                0
+            }
+        } else {
+            zoom_counts.as_ref().map(|counts| counts.len()).unwrap_or(0) as u64
+        }
+    } else {
+        0
+    };
 
     let mut min_len: Option<u64> = None;
     let mut max_len: Option<u64> = None;
@@ -1769,7 +1819,20 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
             over_limit_tiles += 1;
         }
 
-        if include_sample(processed, total_tiles, options.sample.as_ref()) {
+        let include = if let Some(sample) = options.sample.as_ref() {
+            let index = per_zoom_index.entry(zoom).or_insert(0);
+            *index += 1;
+            let total_tiles_db = zoom_counts
+                .as_ref()
+                .and_then(|counts| counts.get(&zoom))
+                .copied()
+                .unwrap_or(total_tiles);
+            include_sample(*index, total_tiles_db, Some(sample))
+        } else {
+            true
+        };
+
+        if include {
             used += 1;
 
             overall.tile_count += 1;
@@ -1865,12 +1928,19 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
                     bucket_tiles.truncate(list_options.limit);
                 }
             }
-        }
 
-        if let Some(SampleSpec::Count(limit)) = options.sample
-            && used >= limit
-        {
-            break;
+            if let Some(SampleSpec::Count(limit)) = options.sample {
+                let entry = per_zoom_used.entry(zoom).or_insert(0);
+                if *entry < limit {
+                    *entry += 1;
+                    if *entry == limit {
+                        zooms_done += 1;
+                        if zooms_done >= target_zoom_count {
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         if processed == 1 || processed.is_multiple_of(100) {
@@ -1937,11 +2007,9 @@ pub fn inspect_mbtiles_with_options(path: &Path, options: InspectOptions) -> Res
         empty_tiles as f64 / used as f64
     };
 
-    let zoom_counts = if options.histogram_buckets > 0 && options.zoom.is_none() {
-        Some(fetch_zoom_counts(&conn)?)
-    } else {
-        None
-    };
+    if zoom_counts.is_none() && options.histogram_buckets > 0 && options.zoom.is_none() {
+        zoom_counts = Some(fetch_zoom_counts(&conn)?);
+    }
 
     let histogram = if options.histogram_buckets > 0 && min_len.is_some() {
         let (level_tiles_used, level_bytes_used) = if let Some(target) = options.zoom {
@@ -2222,7 +2290,7 @@ fn select_tile_data_query(conn: &Connection) -> Result<String> {
     ))
 }
 
-fn select_zoom_length_query(conn: &Connection) -> Result<String> {
+fn select_zoom_length_by_zoom_query(conn: &Connection) -> Result<String> {
     let source = tiles_source_clause(conn)?;
     let data_expr = tiles_data_expr(conn)?;
     let zoom_col = if source == "tiles" {
@@ -2231,7 +2299,7 @@ fn select_zoom_length_query(conn: &Connection) -> Result<String> {
         "map.zoom_level"
     };
     Ok(format!(
-        "SELECT {zoom_col}, LENGTH({data_expr}) FROM {source}",
+        "SELECT LENGTH({data_expr}) FROM {source} WHERE {zoom_col} = ?1",
     ))
 }
 
